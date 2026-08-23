@@ -1,0 +1,28 @@
+# Unity
+mobile/Library/
+mobile/Temp/
+mobile/Logs/
+mobile/Obj/
+mobile/Build/
+mobile/Builds/
+mobile/UserSettings/
+
+# .NET
+**/bin/
+**/obj/
+TestResults/
+
+# Node
+node_modules/
+dashboard/dist/
+*.tsbuildinfo
+
+# Local configuration
+.env
+.env.*
+!.env.example
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store

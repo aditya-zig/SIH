@@ -1,0 +1,18 @@
+{
+  "name": "SurakshaAR.Scene",
+  "rootNamespace": "SurakshaAR.Scene",
+  "references": [
+    "SurakshaAR.Domain",
+    "Unity.XR.ARFoundation",
+    "Unity.XR.CoreUtils"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}
