@@ -34,26 +34,26 @@ namespace SurakshaAR.Editor
                 "FireScenario",
                 new[]
                 {
-                    Target("Fire", "select", "electrical_fire", new Vector3(0f, 0.25f, 1.5f), Color.red),
-                    Target("CO2 Extinguisher", "select", "co2_extinguisher", new Vector3(-0.8f, 0.25f, 1.1f), Color.white),
-                    Target("Water Extinguisher", "select", "water_extinguisher", new Vector3(0.8f, 0.25f, 1.1f), Color.blue),
-                    Target("Safety Pin", "interact", "extinguisher_pin", new Vector3(-0.8f, 0.65f, 1.1f), Color.yellow),
-                    Target("Fire Base", "aim", "fire_base", new Vector3(0f, 0.05f, 1.5f), new Color(1f, 0.45f, 0f)),
-                    Target("Handle", "hold", "extinguisher_handle", new Vector3(-0.8f, 0.9f, 1.1f), Color.gray),
-                    Target("Safe Exit", "waypoint_sequence", "safe_exit_a", new Vector3(1.2f, 0.5f, 2.4f), Color.green),
+                    Target("Fire", "identify_hazard", "select", "electrical_fire", new Vector3(0f, 0.25f, 1.5f), Color.red),
+                    Target("CO2 Extinguisher", "select_extinguisher", "select", "co2_extinguisher", new Vector3(-0.8f, 0.25f, 1.1f), Color.white),
+                    Target("Water Extinguisher", "wrong_extinguisher", "select", "water_extinguisher", new Vector3(0.8f, 0.25f, 1.1f), Color.blue),
+                    Target("Safety Pin", "remove_pin", "interact", "extinguisher_pin", new Vector3(-0.8f, 0.65f, 1.1f), Color.yellow),
+                    Target("Fire Base", "aim", "aim", "fire_base", new Vector3(0f, 0.05f, 1.5f), new Color(1f, 0.45f, 0f)),
+                    Target("Handle", "discharge", "hold", "extinguisher_handle", new Vector3(-0.8f, 0.9f, 1.1f), Color.gray),
+                    Target("Safe Exit", "exit_route", "waypoint_sequence", "safe_exit_a", new Vector3(1.2f, 0.5f, 2.4f), Color.green),
                 });
 
             var gasPrefab = CreateScenarioPrefab(
                 "GasScenario",
                 new[]
                 {
-                    Target("Methane Hazard", "select", "methane_hazard_zone", new Vector3(0f, 0.35f, 1.6f), new Color(0.75f, 0.2f, 0.85f)),
-                    Target("Unsafe Gas Entry", "waypoint_enter", "methane_hazard_zone", new Vector3(0f, 0.05f, 1.6f), Color.red),
-                    Target("Safe Zone", "waypoint_enter", "safe_zone", new Vector3(-1.1f, 0.1f, 0.8f), Color.green),
-                    Target("Supervisor Radio", "interact", "supervisor_radio", new Vector3(-0.7f, 0.35f, 1.1f), Color.cyan),
-                    Target("Self Rescuer", "select", "approved_self_rescuer", new Vector3(0.7f, 0.3f, 1.1f), Color.yellow),
-                    Target("Buddy", "confirm", "buddy_present", new Vector3(1.1f, 0.75f, 1.6f), Color.white),
-                    Target("Safe Exit", "waypoint_sequence", "safe_exit_a", new Vector3(0f, 0.5f, 2.6f), Color.green),
+                    Target("Methane Hazard", "recognize_hazard_zone", "select", "methane_hazard_zone", new Vector3(0f, 0.35f, 1.6f), new Color(0.75f, 0.2f, 0.85f)),
+                    Target("Unsafe Gas Entry", "enter_hazard_zone", "waypoint_enter", "methane_hazard_zone", new Vector3(0f, 0.05f, 1.6f), Color.red),
+                    Target("Safe Zone", "withdraw", "waypoint_enter", "safe_zone", new Vector3(-1.1f, 0.1f, 0.8f), Color.green),
+                    Target("Supervisor Radio", "report_hazard", "interact", "supervisor_radio", new Vector3(-0.7f, 0.35f, 1.1f), Color.cyan),
+                    Target("Self Rescuer", "select_ppe", "select", "approved_self_rescuer", new Vector3(0.7f, 0.3f, 1.1f), Color.yellow),
+                    Target("Buddy", "buddy_check", "confirm", "buddy_present", new Vector3(1.1f, 0.75f, 1.6f), Color.white),
+                    Target("Safe Exit", "exit_route", "waypoint_sequence", "safe_exit_a", new Vector3(0f, 0.5f, 2.6f), Color.green),
                 });
 
             var fireScene = CreateTrainingScene("FireTraining", "fire_001", firePrefab);
@@ -81,6 +81,7 @@ namespace SurakshaAR.Editor
                 targetObject.GetComponent<Renderer>().sharedMaterial = Material(definition.Color);
 
                 var target = targetObject.AddComponent<TrainingTarget>();
+                SetReference(target, "interactionId", definition.InteractionId);
                 SetReference(target, "actionKind", definition.Kind);
                 SetReference(target, "targetId", definition.TargetId);
             }
@@ -223,12 +224,13 @@ namespace SurakshaAR.Editor
 
         private static TargetDefinition Target(
             string name,
+            string interactionId,
             string kind,
             string targetId,
             Vector3 position,
             Color color)
         {
-            return new TargetDefinition(name, kind, targetId, position, color);
+            return new TargetDefinition(name, interactionId, kind, targetId, position, color);
         }
 
         private static void EnsureFolder(string path)
@@ -248,9 +250,10 @@ namespace SurakshaAR.Editor
 
         private sealed class TargetDefinition
         {
-            public TargetDefinition(string name, string kind, string targetId, Vector3 position, Color color)
+            public TargetDefinition(string name, string interactionId, string kind, string targetId, Vector3 position, Color color)
             {
                 Name = name;
+                InteractionId = interactionId;
                 Kind = kind;
                 TargetId = targetId;
                 Position = position;
@@ -258,6 +261,7 @@ namespace SurakshaAR.Editor
             }
 
             public string Name { get; }
+            public string InteractionId { get; }
             public string Kind { get; }
             public string TargetId { get; }
             public Vector3 Position { get; }

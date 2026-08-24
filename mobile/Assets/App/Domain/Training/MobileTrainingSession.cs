@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
+#nullable enable
+
 namespace SurakshaAR.Domain.Training
 {
     public sealed class MobileTrainingUpdate
@@ -23,6 +25,7 @@ namespace SurakshaAR.Domain.Training
     public sealed class MobileTrainingSession
     {
         private readonly IReadOnlyDictionary<string, ScenarioBundle> scenarios;
+        private readonly IReadOnlyList<ScenarioBundle> activeModules;
         private ITrainingRuntime? runtime;
         private ScenarioBundle? scenario;
         private TrainingUpdate? latestUpdate;
@@ -36,8 +39,11 @@ namespace SurakshaAR.Domain.Training
                 throw new ArgumentNullException(nameof(scenarios));
             }
 
-            this.scenarios = scenarios.ToDictionary(scenario => scenario.Id, StringComparer.Ordinal);
+            activeModules = scenarios.ToArray();
+            this.scenarios = activeModules.ToDictionary(scenario => scenario.Id, StringComparer.Ordinal);
         }
+
+        public IReadOnlyList<ScenarioBundle> ActiveModules => activeModules;
 
         public MobileTrainingUpdate SelectModule(string selectedModuleId, AttemptContext context)
         {
@@ -110,6 +116,23 @@ namespace SurakshaAR.Domain.Training
 
         public AttemptResult? CompletedAttempt => completedAttempt;
 
+        public MobileTrainingUpdate Leave()
+        {
+            EnsureActiveAttempt();
+            completedAttempt = runtime!.Finish();
+            latestUpdate = new TrainingUpdate(
+                new TrainingState("abandoned", false),
+                null,
+                completedAttempt.Score,
+                completedAttempt.CriticalFailure,
+                Array.Empty<AttemptEvent>());
+            runtime = null;
+            scenario = null;
+            moduleId = null;
+            waypointIndices.Clear();
+            return new MobileTrainingUpdate(null, latestUpdate, true);
+        }
+
         private MobileTrainingUpdate ApplyWaypoint(ScenarioInteractionDefinition definition, SemanticInteraction interaction)
         {
             var index = waypointIndices.TryGetValue(definition.Id, out var currentIndex) ? currentIndex : 0;
@@ -123,7 +146,15 @@ namespace SurakshaAR.Domain.Training
             waypointIndices[definition.Id] = index;
             if (index < definition.OrderedWaypoints.Count)
             {
-                return new MobileTrainingUpdate(moduleId, latestUpdate!, false);
+                return new MobileTrainingUpdate(
+                    moduleId,
+                    new TrainingUpdate(
+                        latestUpdate!.State,
+                        latestUpdate.CueKey,
+                        latestUpdate.Score,
+                        latestUpdate.CriticalFailure,
+                        Array.Empty<AttemptEvent>()),
+                    false);
             }
 
             return ApplyAction(new TrainingAction(definition.ActionKind, definition.TargetId));

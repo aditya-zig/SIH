@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
+#nullable enable
+
 namespace SurakshaAR.Domain.Training
 {
     public enum ActionOutcome
