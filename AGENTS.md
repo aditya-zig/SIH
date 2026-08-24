@@ -4,7 +4,7 @@
 
 ### Issue tracker
 
-Issues use local Markdown under `.scratch/` until a GitHub remote is configured. See `docs/agents/issue-tracker.md`.
+Issues use GitHub Issues. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
@@ -12,4 +12,4 @@ The repository uses the default triage vocabulary. See `docs/agents/triage-label
 
 ### Domain docs
 
-The repository uses one domain context. See `docs/agents/domain.md` and `CONTEXT.md`.
+The repository uses one domain context. See `docs/agents/domain.md`.
