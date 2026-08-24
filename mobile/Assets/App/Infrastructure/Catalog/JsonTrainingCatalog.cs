@@ -95,11 +95,58 @@ namespace SurakshaAR.Infrastructure.Catalog
 
             public int PassScore { get; set; }
 
+            public SceneDocument Scene { get; set; } = new SceneDocument();
+
+            public List<InteractionDocument> Interactions { get; set; } = new List<InteractionDocument>();
+
             public List<StepDocument> Steps { get; set; } = new List<StepDocument>();
 
             public ScenarioBundle ToBundle()
             {
-                return new ScenarioBundle(Id, Version, PassScore, Steps.Select(step => step.ToStep()).ToArray());
+                return new ScenarioBundle(
+                    Id,
+                    Version,
+                    PassScore,
+                    Steps.Select(step => step.ToStep()).ToArray(),
+                    Scene.ToReference(),
+                    Interactions.Select(interaction => interaction.ToDefinition()).ToArray());
+            }
+        }
+
+        public sealed class SceneDocument
+        {
+            public string SceneId { get; set; } = string.Empty;
+
+            public string PrefabId { get; set; } = string.Empty;
+
+            public ScenarioSceneReference ToReference()
+            {
+                return new ScenarioSceneReference(SceneId, PrefabId);
+            }
+        }
+
+        public sealed class InteractionDocument
+        {
+            public string Id { get; set; } = string.Empty;
+
+            public string Kind { get; set; } = string.Empty;
+
+            public string ActionKind { get; set; } = string.Empty;
+
+            public string TargetId { get; set; } = string.Empty;
+
+            public decimal Threshold { get; set; }
+
+            public List<string> OrderedWaypoints { get; set; } = new List<string>();
+
+            public ScenarioInteractionDefinition ToDefinition()
+            {
+                if (!Enum.TryParse<SemanticInteractionKind>(Kind, true, out var kind))
+                {
+                    throw new InvalidDataException("The interaction kind is not supported.");
+                }
+
+                return new ScenarioInteractionDefinition(Id, kind, ActionKind, TargetId, Threshold, OrderedWaypoints);
             }
         }
 

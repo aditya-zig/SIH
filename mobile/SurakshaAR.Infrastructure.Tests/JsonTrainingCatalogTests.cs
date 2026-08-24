@@ -22,6 +22,10 @@ public sealed class JsonTrainingCatalogTests
             Assert.That(scenario.PassScore, Is.EqualTo(70));
             Assert.That(scenario.Steps, Has.Count.EqualTo(6));
             Assert.That(scenario.Steps[1].WrongActions.Single().Critical, Is.True);
+            Assert.That(scenario.Scene.SceneId, Is.EqualTo("FireTraining"));
+            Assert.That(scenario.Scene.PrefabId, Is.EqualTo("FireScenario"));
+            Assert.That(scenario.Interactions.Single(interaction => interaction.Id == "discharge").Threshold, Is.EqualTo(3));
+            Assert.That(scenario.Interactions.Single(interaction => interaction.Id == "exit_route").OrderedWaypoints, Is.EqualTo(new[] { "safe_exit_a" }));
         });
     }
 }

@@ -3,6 +3,16 @@
   "version": 1,
   "titleKey": "module.gas.title",
   "passScore": 70,
+  "scene": { "sceneId": "GasTraining", "prefabId": "GasScenario" },
+  "interactions": [
+    { "id": "recognize_hazard_zone", "kind": "TargetSelected", "actionKind": "select", "targetId": "methane_hazard_zone" },
+    { "id": "enter_hazard_zone", "kind": "ZoneEntered", "actionKind": "waypoint_enter", "targetId": "methane_hazard_zone" },
+    { "id": "withdraw", "kind": "ZoneExited", "actionKind": "waypoint_enter", "targetId": "safe_zone" },
+    { "id": "report_hazard", "kind": "TargetSelected", "actionKind": "interact", "targetId": "supervisor_radio" },
+    { "id": "select_ppe", "kind": "TargetSelected", "actionKind": "select", "targetId": "approved_self_rescuer" },
+    { "id": "buddy_check", "kind": "TargetSelected", "actionKind": "confirm", "targetId": "buddy_present" },
+    { "id": "exit_route", "kind": "WaypointArrived", "actionKind": "waypoint_sequence", "targetId": "safe_exit_a", "orderedWaypoints": ["safe_exit_a"] }
+  ],
   "steps": [
     {
       "id": "recognize_hazard_zone",
