@@ -6,6 +6,19 @@ namespace SurakshaAR.Infrastructure.Tests;
 public sealed class JsonTrainingCatalogTests
 {
     [Test]
+    public async Task Lists_active_fire_and_gas_bundles()
+    {
+        var directory = Path.GetFullPath(Path.Combine(
+            TestContext.CurrentContext.TestDirectory,
+            "../../../../Assets/StreamingAssets/Scenarios"));
+        var catalog = new JsonTrainingCatalog(directory);
+
+        var bundles = await catalog.List();
+
+        Assert.That(bundles.Select(bundle => bundle.Id), Is.EquivalentTo(new[] { "fire_001", "gas_001" }));
+    }
+
+    [Test]
     public async Task Loads_versioned_fire_scenario()
     {
         var directory = Path.GetFullPath(Path.Combine(

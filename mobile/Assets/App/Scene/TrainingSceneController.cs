@@ -27,6 +27,9 @@ namespace SurakshaAR.Scene
         [SerializeField]
         private GameObject scenarioPrefab = null!;
 
+        [SerializeField]
+        private List<GameObject> scenarioPrefabs = new List<GameObject>();
+
         private MobileTrainingSession? session;
         private ScenarioBundle? scenario;
         private GameObject? anchorObject;
@@ -39,17 +42,50 @@ namespace SurakshaAR.Scene
 
         public bool IsPlaced => anchorObject != null;
 
+        private GameObject? activePrefab;
+
         public void StartAttempt(ScenarioBundle bundle, AttemptContext context)
         {
             scenario = bundle ?? throw new ArgumentNullException(nameof(bundle));
             session = new MobileTrainingSession(new[] { bundle });
+            activePrefab = ResolvePrefab(bundle);
             var update = session.SelectModule(bundle.Id, context);
             Updated?.Invoke(update.Training);
+        }
+
+        private GameObject ResolvePrefab(ScenarioBundle bundle)
+        {
+            var match = scenarioPrefabs.FirstOrDefault(prefab => prefab != null && prefab.name == bundle.Scene.PrefabId);
+            if (match != null)
+            {
+                return match;
+            }
+
+            if (scenarioPrefab != null)
+            {
+                return scenarioPrefab;
+            }
+
+            throw new InvalidOperationException("No scenario prefab is configured for " + bundle.Id);
         }
 
         public AttemptResult FinishAttempt()
         {
             return session?.CompletedAttempt ?? throw new InvalidOperationException("No training attempt is active.");
+        }
+
+        public AttemptResult LeaveAttempt()
+        {
+            if (session == null)
+            {
+                throw new InvalidOperationException("No training attempt is active.");
+            }
+
+            var update = session.Leave();
+            Updated?.Invoke(update.Training);
+            var result = session.CompletedAttempt ?? throw new InvalidOperationException("Leave did not produce a result.");
+            ResetScene();
+            return result;
         }
 
         public void ResetScene()
@@ -62,6 +98,7 @@ namespace SurakshaAR.Scene
 
             session = null;
             scenario = null;
+            activePrefab = null;
             isHolding = false;
             holdInteractionId = null;
             holdTargetId = null;
@@ -101,7 +138,8 @@ namespace SurakshaAR.Scene
             anchorObject = new GameObject("TrainingScenarioAnchor");
             anchorObject.transform.SetPositionAndRotation(pose.position, pose.rotation);
             anchorObject.AddComponent<ARAnchor>();
-            Instantiate(scenarioPrefab, anchorObject.transform);
+            var prefab = activePrefab ?? scenarioPrefab;
+            Instantiate(prefab, anchorObject.transform);
             planeManager.enabled = false;
         }
 

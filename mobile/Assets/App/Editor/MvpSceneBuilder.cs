@@ -58,8 +58,10 @@ namespace SurakshaAR.Editor
 
             var fireScene = CreateTrainingScene("FireTraining", "fire_001", firePrefab);
             var gasScene = CreateTrainingScene("GasTraining", "gas_001", gasPrefab);
+            var launcherScene = CreateLauncherScene("Launcher", new[] { firePrefab, gasPrefab });
             EditorBuildSettings.scenes = new[]
             {
+                new EditorBuildSettingsScene(launcherScene, true),
                 new EditorBuildSettingsScene(fireScene, true),
                 new EditorBuildSettingsScene(gasScene, true),
             };
@@ -130,6 +132,56 @@ namespace SurakshaAR.Editor
             SetReference(coordinator, "contentInstaller", installer);
             SetReference(coordinator, "trainingScene", sceneController);
             SetReference(coordinator, "moduleId", moduleId);
+            SetReference(coordinator, "workerId", string.Empty);
+            SetReference(hud, "contentInstaller", installer);
+            SetReference(hud, "trainingScene", sceneController);
+            SetReference(hud, "devanagariFont", AssetDatabase.LoadAssetAtPath<Font>("Assets/Fonts/NotoSansDevanagari.ttf"));
+            SetReference(hud, "olChikiFont", AssetDatabase.LoadAssetAtPath<Font>("Assets/Fonts/NotoSansOlChiki.ttf"));
+            SetReference(backend, "coordinator", coordinator);
+
+            var path = SceneDirectory + "/" + sceneName + ".unity";
+            EditorSceneManager.SaveScene(scene, path);
+            return path;
+        }
+
+        private static string CreateLauncherScene(string sceneName, IReadOnlyList<GameObject> prefabs)
+        {
+            var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+
+            var sessionObject = new GameObject("AR Session");
+            sessionObject.AddComponent<ARSession>();
+
+            var originObject = new GameObject("XR Origin");
+            var origin = originObject.AddComponent<XROrigin>();
+            var planeManager = originObject.AddComponent<ARPlaneManager>();
+            var raycastManager = originObject.AddComponent<ARRaycastManager>();
+
+            var cameraObject = new GameObject("AR Camera");
+            cameraObject.tag = "MainCamera";
+            cameraObject.transform.SetParent(originObject.transform, false);
+            var camera = cameraObject.AddComponent<Camera>();
+            cameraObject.AddComponent<AudioListener>();
+            cameraObject.AddComponent<ARCameraManager>();
+            cameraObject.AddComponent<ARCameraBackground>();
+#pragma warning disable 618
+            cameraObject.AddComponent<ARPoseDriver>();
+#pragma warning restore 618
+            origin.Camera = camera;
+
+            var applicationObject = new GameObject("Training Application");
+            var installer = applicationObject.AddComponent<OfflineContentInstaller>();
+            var sceneController = applicationObject.AddComponent<TrainingSceneController>();
+            var coordinator = applicationObject.AddComponent<TrainingCoordinator>();
+            var hud = applicationObject.AddComponent<TrainingHud>();
+            var backend = applicationObject.AddComponent<BackendBootstrap>();
+
+            SetReference(sceneController, "raycastManager", raycastManager);
+            SetReference(sceneController, "planeManager", planeManager);
+            SetReference(sceneController, "arCamera", camera);
+            SetReference(sceneController, "scenarioPrefab", prefabs[0]);
+            SetList(sceneController, "scenarioPrefabs", prefabs);
+            SetReference(coordinator, "contentInstaller", installer);
+            SetReference(coordinator, "trainingScene", sceneController);
             SetReference(coordinator, "workerId", string.Empty);
             SetReference(hud, "contentInstaller", installer);
             SetReference(hud, "trainingScene", sceneController);
@@ -219,6 +271,18 @@ namespace SurakshaAR.Editor
         {
             var serialized = new SerializedObject(target);
             serialized.FindProperty(propertyName).stringValue = value;
+            serialized.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        private static void SetList(Object target, string propertyName, IReadOnlyList<GameObject> values)
+        {
+            var serialized = new SerializedObject(target);
+            var property = serialized.FindProperty(propertyName);
+            property.arraySize = values.Count;
+            for (var index = 0; index < values.Count; index++)
+            {
+                property.GetArrayElementAtIndex(index).objectReferenceValue = values[index];
+            }
             serialized.ApplyModifiedPropertiesWithoutUndo();
         }
 
