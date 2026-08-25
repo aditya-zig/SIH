@@ -24,7 +24,6 @@ namespace SurakshaAR.Editor
 
             var scenes = new[]
             {
-                "Assets/Scenes/Launcher.unity",
                 "Assets/Scenes/FireTraining.unity",
                 "Assets/Scenes/GasTraining.unity",
             };
@@ -39,7 +38,6 @@ namespace SurakshaAR.Editor
             {
                 new EditorBuildSettingsScene(scenes[0], true),
                 new EditorBuildSettingsScene(scenes[1], true),
-                new EditorBuildSettingsScene(scenes[2], true),
             };
 
             PlayerSettings.productName = "Suraksha AR";
