@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
+#nullable enable
+
 namespace SurakshaAR.Domain.Training
 {
     public enum ActionOutcome
@@ -9,6 +11,99 @@ namespace SurakshaAR.Domain.Training
         Accepted,
         Penalized,
         Rejected,
+    }
+
+    public enum SemanticInteractionKind
+    {
+        TargetSelected,
+        CompletedHold,
+        InterruptedHold,
+        ZoneEntered,
+        ZoneExited,
+        WaypointArrived,
+    }
+
+    public sealed class SemanticInteraction
+    {
+        public SemanticInteraction(string interactionId, SemanticInteractionKind kind, string targetId, decimal value = 0)
+        {
+            if (value < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value));
+            }
+
+            InteractionId = TrainingAction.RequireText(interactionId, nameof(interactionId));
+            Kind = kind;
+            TargetId = TrainingAction.RequireText(targetId, nameof(targetId));
+            Value = value;
+        }
+
+        public string InteractionId { get; }
+
+        public SemanticInteractionKind Kind { get; }
+
+        public string TargetId { get; }
+
+        public decimal Value { get; }
+    }
+
+    public sealed class ScenarioSceneReference
+    {
+        public ScenarioSceneReference(string sceneId, string prefabId)
+        {
+            SceneId = TrainingAction.RequireText(sceneId, nameof(sceneId));
+            PrefabId = TrainingAction.RequireText(prefabId, nameof(prefabId));
+        }
+
+        public string SceneId { get; }
+
+        public string PrefabId { get; }
+    }
+
+    public sealed class ScenarioInteractionDefinition
+    {
+        public ScenarioInteractionDefinition(
+            string id,
+            SemanticInteractionKind kind,
+            string actionKind,
+            string targetId,
+            decimal threshold = 0,
+            IReadOnlyList<string>? orderedWaypoints = null)
+        {
+            if (threshold < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(threshold));
+            }
+
+            Id = TrainingAction.RequireText(id, nameof(id));
+            Kind = kind;
+            ActionKind = TrainingAction.RequireText(actionKind, nameof(actionKind));
+            TargetId = TrainingAction.RequireText(targetId, nameof(targetId));
+            Threshold = threshold;
+            OrderedWaypoints = orderedWaypoints ?? Array.Empty<string>();
+
+            if (OrderedWaypoints.Any(string.IsNullOrWhiteSpace))
+            {
+                throw new ArgumentException("Waypoint ids are required.", nameof(orderedWaypoints));
+            }
+
+            if (kind == SemanticInteractionKind.WaypointArrived && OrderedWaypoints.Count == 0)
+            {
+                throw new ArgumentException("Waypoint interactions need an ordered route.", nameof(orderedWaypoints));
+            }
+        }
+
+        public string Id { get; }
+
+        public SemanticInteractionKind Kind { get; }
+
+        public string ActionKind { get; }
+
+        public string TargetId { get; }
+
+        public decimal Threshold { get; }
+
+        public IReadOnlyList<string> OrderedWaypoints { get; }
     }
 
     public sealed class TrainingAction
@@ -126,6 +221,23 @@ namespace SurakshaAR.Domain.Training
     public sealed class ScenarioBundle
     {
         public ScenarioBundle(string id, int version, int passScore, IReadOnlyList<ScenarioStep> steps)
+            : this(
+                id,
+                version,
+                passScore,
+                steps,
+                new ScenarioSceneReference(id + "_scene", id + "_prefab"),
+                Array.Empty<ScenarioInteractionDefinition>())
+        {
+        }
+
+        public ScenarioBundle(
+            string id,
+            int version,
+            int passScore,
+            IReadOnlyList<ScenarioStep> steps,
+            ScenarioSceneReference scene,
+            IReadOnlyList<ScenarioInteractionDefinition> interactions)
         {
             if (version < 1)
             {
@@ -141,6 +253,8 @@ namespace SurakshaAR.Domain.Training
             Version = version;
             PassScore = passScore;
             Steps = steps ?? throw new ArgumentNullException(nameof(steps));
+            Scene = scene ?? throw new ArgumentNullException(nameof(scene));
+            Interactions = interactions ?? throw new ArgumentNullException(nameof(interactions));
 
             if (Steps.Count == 0)
             {
@@ -151,6 +265,11 @@ namespace SurakshaAR.Domain.Training
             {
                 throw new ArgumentException("Scenario step ids must be unique.", nameof(steps));
             }
+
+            if (Interactions.Select(interaction => interaction.Id).Distinct(StringComparer.Ordinal).Count() != Interactions.Count)
+            {
+                throw new ArgumentException("Scenario interaction ids must be unique.", nameof(interactions));
+            }
         }
 
         public string Id { get; }
@@ -160,6 +279,10 @@ namespace SurakshaAR.Domain.Training
         public int PassScore { get; }
 
         public IReadOnlyList<ScenarioStep> Steps { get; }
+
+        public ScenarioSceneReference Scene { get; }
+
+        public IReadOnlyList<ScenarioInteractionDefinition> Interactions { get; }
     }
 
     public sealed class AttemptContext

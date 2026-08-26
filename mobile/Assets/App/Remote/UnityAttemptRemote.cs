@@ -63,7 +63,7 @@ namespace SurakshaAR.Remote
                             certificateCodes[attempt.Result.AttemptId] = response.certificateCode;
                         }
                     }
-                    else if (request.responseCode == 400 || request.responseCode == 422)
+                    else if (request.responseCode == 400 || request.responseCode == 422 || request.responseCode == 403)
                     {
                         rejected.Add(attempt.Result.AttemptId);
                     }
@@ -94,6 +94,7 @@ namespace SurakshaAR.Remote
         private sealed class SyncPayload
         {
             public string attemptId = string.Empty;
+            public string workerId = string.Empty;
             public string deviceId = string.Empty;
             public string moduleId = string.Empty;
             public int moduleVersion;
@@ -107,6 +108,7 @@ namespace SurakshaAR.Remote
                 return new SyncPayload
                 {
                     attemptId = pending.Result.AttemptId.ToString(),
+                    workerId = pending.Result.WorkerId,
                     deviceId = pending.Result.DeviceId,
                     moduleId = pending.Result.ModuleId,
                     moduleVersion = pending.Result.ModuleVersion,

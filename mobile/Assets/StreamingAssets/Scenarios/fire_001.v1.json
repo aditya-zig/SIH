@@ -3,6 +3,15 @@
   "version": 1,
   "titleKey": "module.fire.title",
   "passScore": 70,
+  "scene": { "sceneId": "FireTraining", "prefabId": "FireScenario" },
+  "interactions": [
+    { "id": "identify_hazard", "kind": "TargetSelected", "actionKind": "select", "targetId": "electrical_fire" },
+    { "id": "select_extinguisher", "kind": "TargetSelected", "actionKind": "select", "targetId": "co2_extinguisher" },
+    { "id": "remove_pin", "kind": "TargetSelected", "actionKind": "interact", "targetId": "extinguisher_pin" },
+    { "id": "aim", "kind": "TargetSelected", "actionKind": "aim", "targetId": "fire_base" },
+    { "id": "discharge", "kind": "CompletedHold", "actionKind": "hold", "targetId": "extinguisher_handle", "threshold": 3 },
+    { "id": "exit_route", "kind": "WaypointArrived", "actionKind": "waypoint_sequence", "targetId": "safe_exit_a", "orderedWaypoints": ["safe_exit_a"] }
+  ],
   "steps": [
     {
       "id": "identify_hazard",

@@ -50,6 +50,38 @@ namespace SurakshaAR.Infrastructure.Catalog
             return document.ToBundle();
         }
 
+        public async Task<IReadOnlyList<ScenarioBundle>> List()
+        {
+            if (!Directory.Exists(directory))
+            {
+                return Array.Empty<ScenarioBundle>();
+            }
+
+            var files = Directory.GetFiles(directory, "*.v*.json");
+            var latestByModule = files
+                .Select(path => new { Path = path, FileName = Path.GetFileNameWithoutExtension(path) })
+                .Where(entry => entry.FileName.Contains(".v"))
+                .Select(entry =>
+                {
+                    var fileName = entry.FileName;
+                    var separator = fileName.LastIndexOf(".v", StringComparison.Ordinal);
+                    var moduleId = fileName.Substring(0, separator);
+                    var versionText = fileName.Substring(separator + 2);
+                    return new { entry.Path, ModuleId = moduleId, VersionText = versionText };
+                })
+                .Where(entry => int.TryParse(entry.VersionText, out _))
+                .GroupBy(entry => entry.ModuleId, StringComparer.Ordinal)
+                .Select(group => group.OrderByDescending(entry => int.Parse(entry.VersionText)).First());
+
+            var bundles = new List<ScenarioBundle>();
+            foreach (var entry in latestByModule)
+            {
+                bundles.Add(await Get(entry.ModuleId).ConfigureAwait(false));
+            }
+
+            return bundles.OrderBy(bundle => bundle.Id, StringComparer.Ordinal).ToArray();
+        }
+
         private string LatestPath(string moduleId)
         {
             var candidates = Directory.Exists(directory)
@@ -95,11 +127,58 @@ namespace SurakshaAR.Infrastructure.Catalog
 
             public int PassScore { get; set; }
 
+            public SceneDocument Scene { get; set; } = new SceneDocument();
+
+            public List<InteractionDocument> Interactions { get; set; } = new List<InteractionDocument>();
+
             public List<StepDocument> Steps { get; set; } = new List<StepDocument>();
 
             public ScenarioBundle ToBundle()
             {
-                return new ScenarioBundle(Id, Version, PassScore, Steps.Select(step => step.ToStep()).ToArray());
+                return new ScenarioBundle(
+                    Id,
+                    Version,
+                    PassScore,
+                    Steps.Select(step => step.ToStep()).ToArray(),
+                    Scene.ToReference(),
+                    Interactions.Select(interaction => interaction.ToDefinition()).ToArray());
+            }
+        }
+
+        public sealed class SceneDocument
+        {
+            public string SceneId { get; set; } = string.Empty;
+
+            public string PrefabId { get; set; } = string.Empty;
+
+            public ScenarioSceneReference ToReference()
+            {
+                return new ScenarioSceneReference(SceneId, PrefabId);
+            }
+        }
+
+        public sealed class InteractionDocument
+        {
+            public string Id { get; set; } = string.Empty;
+
+            public string Kind { get; set; } = string.Empty;
+
+            public string ActionKind { get; set; } = string.Empty;
+
+            public string TargetId { get; set; } = string.Empty;
+
+            public decimal Threshold { get; set; }
+
+            public List<string> OrderedWaypoints { get; set; } = new List<string>();
+
+            public ScenarioInteractionDefinition ToDefinition()
+            {
+                if (!Enum.TryParse<SemanticInteractionKind>(Kind, true, out var kind))
+                {
+                    throw new InvalidDataException("The interaction kind is not supported.");
+                }
+
+                return new ScenarioInteractionDefinition(Id, kind, ActionKind, TargetId, Threshold, OrderedWaypoints);
             }
         }
 

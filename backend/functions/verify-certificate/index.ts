@@ -36,7 +36,7 @@ Deno.serve(async (request) => {
       issued_at,
       expires_at,
       status,
-      workers!certificates_worker_id_fkey(profiles!workers_id_fkey(full_name)),
+      organizations!certificates_issuer_organization_id_fkey(name),
       training_modules!certificates_module_id_fkey(title_key),
       module_version
     `)
@@ -57,7 +57,7 @@ Deno.serve(async (request) => {
     expires_at: string | null;
     status: "valid" | "revoked";
     module_version: number;
-    workers: { profiles: { full_name: string } };
+    organizations: { name: string };
     training_modules: { title_key: string };
   };
   const valid = certificate.status === "valid"
@@ -66,7 +66,7 @@ Deno.serve(async (request) => {
     JSON.stringify({
       valid,
       certificateCode: certificate.certificate_code,
-      workerName: certificate.workers.profiles.full_name,
+      issuer: certificate.organizations.name,
       moduleTitleKey: certificate.training_modules.title_key,
       moduleVersion: certificate.module_version,
       score: certificate.score,

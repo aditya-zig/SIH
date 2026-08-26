@@ -6,6 +6,11 @@ mobile/Obj/
 mobile/Build/
 mobile/Builds/
 mobile/UserSettings/
+mobile/.utmp/
+mobile/Assets/Fonts/Generated/
+mobile/Assets/Fonts/Generated.meta
+mobile/Assets/XR/Temp/
+mobile/Assets/XR/Temp.meta
 
 # .NET
 **/bin/
@@ -21,6 +26,13 @@ dashboard/dist/
 .env
 .env.*
 !.env.example
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# Generated test output
+test-results.xml
 
 # Editors and OS
 .idea/

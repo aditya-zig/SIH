@@ -2,6 +2,7 @@ using System;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using SurakshaAR.Infrastructure.Persistence;
 using UnityEngine;
 using UnityEngine.Networking;
 
@@ -9,15 +10,17 @@ namespace SurakshaAR.Remote
 {
     public sealed class SupabaseSessionTokenProvider : ISessionTokenProvider
     {
-        private const string WorkerIdKey = "suraksha.auth.workerId";
-
         private readonly string url;
         private readonly string publishableKey;
+        private readonly JsonProvisionedWorkerStore workerStore;
         private string accessToken = string.Empty;
         private string refreshToken;
         private long expiresAt;
 
-        public SupabaseSessionTokenProvider(string url, string publishableKey)
+        public SupabaseSessionTokenProvider(
+            string url,
+            string publishableKey,
+            JsonProvisionedWorkerStore workerStore)
         {
             if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(publishableKey))
             {
@@ -26,8 +29,9 @@ namespace SurakshaAR.Remote
 
             this.url = url.TrimEnd('/');
             this.publishableKey = publishableKey;
+            this.workerStore = workerStore ?? throw new ArgumentNullException(nameof(workerStore));
             refreshToken = string.Empty;
-            WorkerId = PlayerPrefs.GetString(WorkerIdKey, string.Empty);
+            WorkerId = workerStore.Load() ?? string.Empty;
         }
 
         public string WorkerId { get; private set; }
@@ -69,14 +73,37 @@ namespace SurakshaAR.Remote
             return accessToken;
         }
 
+        public async Task ProvisionWorker(string workerId, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(workerId))
+            {
+                throw new ArgumentException("A worker id is required.", nameof(workerId));
+            }
+
+            var endpoint = url + "/rest/v1/workers?select=id&id=eq." + Uri.EscapeDataString(workerId);
+            using (var request = UnityWebRequest.Get(endpoint))
+            {
+                request.SetRequestHeader("apikey", publishableKey);
+                request.SetRequestHeader("authorization", "Bearer " + await GetAccessToken(cancellationToken));
+                request.SetRequestHeader("accept", "application/vnd.pgrst.object+json");
+                await Send(request, cancellationToken);
+                if (request.result != UnityWebRequest.Result.Success)
+                {
+                    throw new InvalidOperationException("The selected worker is not available for this trainer.");
+                }
+            }
+
+            workerStore.Save(workerId);
+            WorkerId = workerId;
+        }
+
         public void Clear()
         {
             accessToken = string.Empty;
             refreshToken = string.Empty;
             WorkerId = string.Empty;
             expiresAt = 0;
-            PlayerPrefs.DeleteKey(WorkerIdKey);
-            PlayerPrefs.Save();
+            workerStore.Clear();
         }
 
         private async Task RequestToken(string grantType, string payload, CancellationToken cancellationToken)
@@ -104,13 +131,6 @@ namespace SurakshaAR.Remote
                 accessToken = response.access_token;
                 refreshToken = response.refresh_token;
                 expiresAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + response.expires_in;
-                if (response.user != null && !string.IsNullOrWhiteSpace(response.user.id))
-                {
-                    WorkerId = response.user.id;
-                }
-
-                PlayerPrefs.SetString(WorkerIdKey, WorkerId);
-                PlayerPrefs.Save();
             }
         }
 
@@ -145,13 +165,7 @@ namespace SurakshaAR.Remote
             public string access_token = string.Empty;
             public string refresh_token = string.Empty;
             public int expires_in;
-            public SessionUser? user;
         }
 
-        [Serializable]
-        private sealed class SessionUser
-        {
-            public string id = string.Empty;
-        }
     }
 }
