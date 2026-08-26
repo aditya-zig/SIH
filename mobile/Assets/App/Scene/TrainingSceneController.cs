@@ -33,18 +33,14 @@ namespace SurakshaAR.Scene
         private MobileTrainingSession? session;
         private ScenarioBundle? scenario;
         private GameObject? anchorObject;
-        private float holdStartTime;
-        private bool isHolding;
-        private string? holdInteractionId;
-        private string? holdTargetId;
+        private GameObject? activePrefab;
+
+        private readonly HoldTracker holdTracker = new HoldTracker();
+        private readonly ProximityTracker proximity = new ProximityTracker();
 
         public event Action<TrainingUpdate>? Updated;
 
         public bool IsPlaced => anchorObject != null;
-
-        private GameObject? activePrefab;
-        private readonly Dictionary<string, bool> zoneInside = new Dictionary<string, bool>(StringComparer.Ordinal);
-        private readonly Dictionary<string, int> waypointProgress = new Dictionary<string, int>(StringComparer.Ordinal);
 
         public void StartAttempt(ScenarioBundle bundle, AttemptContext context)
         {
@@ -101,11 +97,8 @@ namespace SurakshaAR.Scene
             session = null;
             scenario = null;
             activePrefab = null;
-            isHolding = false;
-            holdInteractionId = null;
-            holdTargetId = null;
-            zoneInside.Clear();
-            waypointProgress.Clear();
+            holdTracker.Reset();
+            proximity.Clear();
             planeManager.enabled = true;
         }
 
@@ -125,8 +118,7 @@ namespace SurakshaAR.Scene
                 return;
             }
 
-            CheckWaypointArrival();
-            CheckZoneEntryExit();
+            CheckProximityInteractions();
             HandleHoldInput();
             HandleTapInput();
         }
@@ -180,10 +172,7 @@ namespace SurakshaAR.Scene
 
             if (definition.Kind == SemanticInteractionKind.CompletedHold)
             {
-                isHolding = true;
-                holdStartTime = Time.time;
-                holdInteractionId = definition.Id;
-                holdTargetId = definition.TargetId;
+                holdTracker.Begin(definition.Id, definition.TargetId, Time.time);
                 return;
             }
 
@@ -194,79 +183,58 @@ namespace SurakshaAR.Scene
                 return;
             }
 
-            var interaction = new SemanticInteraction(definition.Id, definition.Kind, definition.TargetId);
-            var update = session!.Apply(interaction);
-            Updated?.Invoke(update.Training);
-            if (update.ReturnedToLauncher)
-            {
-                ResetScene();
-            }
+            Emit(new SemanticInteraction(definition.Id, definition.Kind, definition.TargetId));
         }
 
         private void HandleHoldInput()
         {
-            if (!isHolding || holdInteractionId == null || holdTargetId == null)
+            if (!holdTracker.IsActive)
             {
                 return;
             }
 
             if (Input.touchCount != 1)
             {
-                var duration = Time.time - holdStartTime;
-                isHolding = false;
-                var kind = SemanticInteractionKind.InterruptedHold;
-                var holdInteraction = new SemanticInteraction(holdInteractionId, kind, holdTargetId);
-                var holdUpdate = session!.Apply(holdInteraction);
-                Updated?.Invoke(holdUpdate.Training);
-                if (holdUpdate.ReturnedToLauncher)
+                if (holdTracker.TryCancel(out var id, out var target))
                 {
-                    ResetScene();
+                    Emit(new SemanticInteraction(id, SemanticInteractionKind.InterruptedHold, target));
                 }
                 return;
             }
 
-            var t = Input.GetTouch(0);
-            if (t.phase == TouchPhase.Ended)
+            var touch = Input.GetTouch(0);
+            if (touch.phase == TouchPhase.Ended)
             {
-                var holdDuration = Time.time - holdStartTime;
-                isHolding = false;
-                var holdKind = SemanticInteractionKind.CompletedHold;
-                var interaction = new SemanticInteraction(holdInteractionId, holdKind, holdTargetId, (decimal)holdDuration);
-                var update = session!.Apply(interaction);
-                Updated?.Invoke(update.Training);
-                if (update.ReturnedToLauncher)
+                if (holdTracker.TryComplete(Time.time, out var id, out var target, out var duration))
                 {
-                    ResetScene();
+                    Emit(new SemanticInteraction(id, SemanticInteractionKind.CompletedHold, target, duration));
                 }
             }
-            else if (t.phase == TouchPhase.Canceled)
+            else if (touch.phase == TouchPhase.Canceled)
             {
-                isHolding = false;
-                var interaction = new SemanticInteraction(holdInteractionId, SemanticInteractionKind.InterruptedHold, holdTargetId);
-                var update = session!.Apply(interaction);
-                Updated?.Invoke(update.Training);
-                if (update.ReturnedToLauncher)
+                if (holdTracker.TryCancel(out var id, out var target))
                 {
-                    ResetScene();
+                    Emit(new SemanticInteraction(id, SemanticInteractionKind.InterruptedHold, target));
                 }
             }
         }
 
-        private void CheckWaypointArrival()
+        private void CheckProximityInteractions()
         {
             if (anchorObject == null || scenario == null)
             {
                 return;
             }
 
-            var waypointDefinitions = scenario.Interactions.Where(d => d.Kind == SemanticInteractionKind.WaypointArrived).ToArray();
-            if (waypointDefinitions.Length == 0)
+            foreach (var definition in scenario.Interactions)
             {
-                return;
-            }
+                if (definition.Kind != SemanticInteractionKind.WaypointArrived
+                    && definition.Kind != SemanticInteractionKind.ZoneEntered
+                    && definition.Kind != SemanticInteractionKind.ZoneExited)
+                {
+                    continue;
+                }
 
-            foreach (var definition in waypointDefinitions)
-            {
                 var targetObject = anchorObject.GetComponentsInChildren<TrainingTarget>()
                     .FirstOrDefault(t => t.InteractionId == definition.Id);
                 if (targetObject == null)
@@ -274,101 +242,39 @@ namespace SurakshaAR.Scene
                     continue;
                 }
 
-                var distance = Vector3.Distance(arCamera.transform.position, targetObject.transform.position);
-                var wasInside = zoneInside.TryGetValue(definition.Id, out var inside) && inside;
-                var isInside = distance <= 0.8f;
-                if (isInside == wasInside)
+                if (!proximity.ShouldEmitOnEnter(definition.Id, arCamera.transform.position, targetObject.transform.position))
                 {
                     continue;
                 }
 
-                zoneInside[definition.Id] = isInside;
-                if (!isInside)
+                SemanticInteraction interaction;
+                if (definition.Kind == SemanticInteractionKind.WaypointArrived)
                 {
-                    continue;
-                }
+                    var nextWaypoint = definition.OrderedWaypoints.FirstOrDefault();
+                    if (string.IsNullOrWhiteSpace(nextWaypoint))
+                    {
+                        continue;
+                    }
 
-                if (!waypointProgress.TryGetValue(definition.Id, out var nextIndex))
-                {
-                    nextIndex = 0;
-                }
-
-                if (nextIndex >= definition.OrderedWaypoints.Count)
-                {
-                    continue;
-                }
-
-                var nextWaypoint = definition.OrderedWaypoints[nextIndex];
-                if (string.IsNullOrWhiteSpace(nextWaypoint))
-                {
-                    continue;
-                }
-
-                var interaction = new SemanticInteraction(definition.Id, SemanticInteractionKind.WaypointArrived, nextWaypoint);
-                var update = session!.Apply(interaction);
-                Updated?.Invoke(update.Training);
-                if (update.ReturnedToLauncher)
-                {
-                    ResetScene();
+                    interaction = new SemanticInteraction(definition.Id, definition.Kind, nextWaypoint);
                 }
                 else
                 {
-                    var accepted = update.Training.NewEvents.Count == 0 || update.Training.NewEvents.Any(e => e.Outcome != ActionOutcome.Rejected);
-                    if (accepted)
-                    {
-                        waypointProgress[definition.Id] = nextIndex + 1;
-                    }
+                    interaction = new SemanticInteraction(definition.Id, definition.Kind, definition.TargetId);
                 }
+
+                Emit(interaction);
                 break;
             }
         }
 
-        private void CheckZoneEntryExit()
+        private void Emit(SemanticInteraction interaction)
         {
-            if (anchorObject == null || scenario == null)
+            var update = session!.Apply(interaction);
+            Updated?.Invoke(update.Training);
+            if (update.ReturnedToLauncher)
             {
-                return;
-            }
-
-            var zoneDefinitions = scenario.Interactions
-                .Where(d => d.Kind == SemanticInteractionKind.ZoneEntered || d.Kind == SemanticInteractionKind.ZoneExited)
-                .ToArray();
-            if (zoneDefinitions.Length == 0)
-            {
-                return;
-            }
-
-            foreach (var definition in zoneDefinitions)
-            {
-                var targetObject = anchorObject.GetComponentsInChildren<TrainingTarget>()
-                    .FirstOrDefault(t => t.InteractionId == definition.Id);
-                if (targetObject == null)
-                {
-                    continue;
-                }
-
-                var distance = Vector3.Distance(arCamera.transform.position, targetObject.transform.position);
-                var wasInside = zoneInside.TryGetValue(definition.Id, out var inside) && inside;
-                var isInside = distance <= 0.8f;
-                if (isInside == wasInside)
-                {
-                    continue;
-                }
-
-                zoneInside[definition.Id] = isInside;
-                if (!isInside)
-                {
-                    continue;
-                }
-
-                var interaction = new SemanticInteraction(definition.Id, definition.Kind, definition.TargetId);
-                var update = session!.Apply(interaction);
-                Updated?.Invoke(update.Training);
-                if (update.ReturnedToLauncher)
-                {
-                    ResetScene();
-                }
-                break;
+                ResetScene();
             }
         }
     }
