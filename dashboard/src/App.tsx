@@ -178,18 +178,23 @@ function Verification({ code }: { code: string }) {
       <section className={`certificate ${result?.valid ? "is-valid" : ""}`}>
         {!result && !error && <p>Checking certificate...</p>}
         {error && <><p className="stamp failed">Check failed</p><h1>{error}</h1></>}
-        {result && !result.valid && <><p className="stamp failed">No valid record</p><h1>Certificate not verified</h1><code>{result.certificateCode}</code></>}
-        {result?.valid && (
+        {result && (
           <>
-            <p className="stamp">Verified training record</p>
-            <h1>{result.workerName}</h1>
-            <p className="course">{result.moduleTitleKey}</p>
-            <dl>
-              <div><dt>Score</dt><dd>{result.score}%</dd></div>
-              <div><dt>Module version</dt><dd>{result.moduleVersion}</dd></div>
-              <div><dt>Issued</dt><dd>{new Intl.DateTimeFormat("en-IN", { dateStyle: "long" }).format(new Date(result.issuedAt!))}</dd></div>
-              <div><dt>Certificate</dt><dd>{result.certificateCode}</dd></div>
-            </dl>
+            <p className={`stamp ${result.valid ? "" : "failed"}`}>{result.valid ? "Verified training record" : "Certificate not verified"}</p>
+            <h1>{result.issuer ?? "No valid record"}</h1>
+            {result.moduleTitleKey && (
+              <>
+                <p className="course">{result.moduleTitleKey}</p>
+                <dl>
+                  <div><dt>Score</dt><dd>{result.score}%</dd></div>
+                  <div><dt>Module version</dt><dd>{result.moduleVersion}</dd></div>
+                  <div><dt>Issued</dt><dd>{new Intl.DateTimeFormat("en-IN", { dateStyle: "long" }).format(new Date(result.issuedAt!))}</dd></div>
+                  <div><dt>Expires</dt><dd>{result.expiresAt ? new Intl.DateTimeFormat("en-IN", { dateStyle: "long" }).format(new Date(result.expiresAt)) : "No expiry"}</dd></div>
+                  <div><dt>Status</dt><dd>{result.status}</dd></div>
+                  <div><dt>Certificate</dt><dd>{result.certificateCode}</dd></div>
+                </dl>
+              </>
+            )}
             <p className="certificate-note">This verifies a server-validated training attempt. Recognition depends on the issuing organization.</p>
           </>
         )}

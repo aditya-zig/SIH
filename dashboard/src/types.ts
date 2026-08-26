@@ -30,7 +30,7 @@ export type DashboardData = {
 export type CertificateVerification = {
   valid: boolean;
   certificateCode: string;
-  workerName?: string;
+  issuer?: string;
   moduleTitleKey?: string;
   moduleVersion?: number;
   score?: number;

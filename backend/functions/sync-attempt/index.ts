@@ -7,6 +7,7 @@ import {
 
 type SyncPayload = {
   attemptId: string;
+  workerId: string;
   deviceId: string;
   moduleId: string;
   moduleVersion: number;
@@ -27,6 +28,7 @@ function isPayload(value: unknown): value is SyncPayload {
   const payload = value as Partial<SyncPayload>;
   return (
     typeof payload.attemptId === "string" &&
+    typeof payload.workerId === "string" &&
     typeof payload.deviceId === "string" &&
     typeof payload.moduleId === "string" &&
     Number.isInteger(payload.moduleVersion) &&
@@ -92,7 +94,8 @@ Deno.serve(async (request) => {
 
   const { data, error } = await supabase.rpc("persist_evaluated_attempt", {
     p_attempt_id: body.attemptId,
-    p_worker_id: userData.user.id,
+    p_trainer_id: userData.user.id,
+    p_worker_id: body.workerId,
     p_module_id: module.id,
     p_module_version: body.moduleVersion,
     p_device_id: body.deviceId,
@@ -105,7 +108,12 @@ Deno.serve(async (request) => {
     p_evidence_hash: await evidenceHash(body),
     p_events: evaluation.events,
   });
-  if (error) return response({ error: "Attempt could not be stored" }, 500);
+  if (error) {
+    return response(
+      { error: error.code === "42501" ? "Trainer is not authorized for this worker" : "Attempt could not be stored" },
+      error.code === "42501" ? 403 : 500,
+    );
+  }
 
   return response(data);
 });
