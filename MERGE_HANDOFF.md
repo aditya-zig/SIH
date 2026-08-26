@@ -1,6 +1,18 @@
 # Branch reconciliation handoff
 
-This document records the branch state on 2026-08-25. Do not merge these branches without reconciling the two Unity application designs.
+This document records the branch state on 2026-08-27. Do not merge these branches without reconciling the two Unity application designs.
+
+## Current state
+
+The preservation task is complete. `preserve/local-unity-state-2026-08-25` is clean and tracks `origin/preserve/local-unity-state-2026-08-25`.
+
+It has three commits after `main` commit `5a8fe61`.
+
+- `a0930e6` preserves reviewed local Unity configuration, metadata, project settings, development material, and safe ignore rules.
+- `6df84eb` removes the nonexistent launcher scene from the MVP build list.
+- `ea8900b` adds this handoff.
+
+No merge, branch deletion, force push, history rewrite, reset, or clean command was used. `main` and `feat/full-app-phases-1-5` remain intact.
 
 ## Branches
 
@@ -75,6 +87,8 @@ No Unity scene file exists in the preserved working tree. `mobile/Assets/Scenes.
 3. Replace `BackendService` and `TrainingUIBridge` placeholder paths with calls into the retained coordinator and remote adapters.
 4. Reconcile the action model and `IScenarioModule` before reconnecting scenarios to the UI.
 5. Preserve each Unity asset's matching `.meta` file. Do not regenerate GUIDs during the merge.
+
+Do not start reconciliation unless the user explicitly asks for it. When reconciliation begins, keep all three branches available, inspect this handoff again, and use the selected merge direction rather than guessing which scene generator or interaction model should win.
 
 ## Test status
 
