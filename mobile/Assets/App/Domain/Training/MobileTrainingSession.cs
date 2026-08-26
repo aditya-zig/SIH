@@ -136,6 +136,11 @@ namespace SurakshaAR.Domain.Training
         private MobileTrainingUpdate ApplyWaypoint(ScenarioInteractionDefinition definition, SemanticInteraction interaction)
         {
             var index = waypointIndices.TryGetValue(definition.Id, out var currentIndex) ? currentIndex : 0;
+            if (index >= definition.OrderedWaypoints.Count)
+            {
+                return RecordRejectedInteraction(interaction);
+            }
+
             var expectedWaypoint = definition.OrderedWaypoints[index];
             if (!string.Equals(expectedWaypoint, interaction.TargetId, StringComparison.Ordinal))
             {

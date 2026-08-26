@@ -24,6 +24,7 @@ namespace SurakshaAR.Editor
 
             var scenes = new[]
             {
+                "Assets/Scenes/Launcher.unity",
                 "Assets/Scenes/FireTraining.unity",
                 "Assets/Scenes/GasTraining.unity",
             };

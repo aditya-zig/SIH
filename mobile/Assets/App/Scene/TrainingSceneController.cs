@@ -43,6 +43,8 @@ namespace SurakshaAR.Scene
         public bool IsPlaced => anchorObject != null;
 
         private GameObject? activePrefab;
+        private readonly Dictionary<string, bool> zoneInside = new Dictionary<string, bool>(StringComparer.Ordinal);
+        private readonly Dictionary<string, int> waypointProgress = new Dictionary<string, int>(StringComparer.Ordinal);
 
         public void StartAttempt(ScenarioBundle bundle, AttemptContext context)
         {
@@ -102,6 +104,8 @@ namespace SurakshaAR.Scene
             isHolding = false;
             holdInteractionId = null;
             holdTargetId = null;
+            zoneInside.Clear();
+            waypointProgress.Clear();
             planeManager.enabled = true;
         }
 
@@ -222,12 +226,23 @@ namespace SurakshaAR.Scene
             }
 
             var t = Input.GetTouch(0);
-            if (t.phase == TouchPhase.Ended || t.phase == TouchPhase.Canceled)
+            if (t.phase == TouchPhase.Ended)
             {
                 var holdDuration = Time.time - holdStartTime;
                 isHolding = false;
                 var holdKind = SemanticInteractionKind.CompletedHold;
                 var interaction = new SemanticInteraction(holdInteractionId, holdKind, holdTargetId, (decimal)holdDuration);
+                var update = session!.Apply(interaction);
+                Updated?.Invoke(update.Training);
+                if (update.ReturnedToLauncher)
+                {
+                    ResetScene();
+                }
+            }
+            else if (t.phase == TouchPhase.Canceled)
+            {
+                isHolding = false;
+                var interaction = new SemanticInteraction(holdInteractionId, SemanticInteractionKind.InterruptedHold, holdTargetId);
                 var update = session!.Apply(interaction);
                 Updated?.Invoke(update.Training);
                 if (update.ReturnedToLauncher)
@@ -260,12 +275,30 @@ namespace SurakshaAR.Scene
                 }
 
                 var distance = Vector3.Distance(arCamera.transform.position, targetObject.transform.position);
-                if (distance > 0.8f)
+                var wasInside = zoneInside.TryGetValue(definition.Id, out var inside) && inside;
+                var isInside = distance <= 0.8f;
+                if (isInside == wasInside)
                 {
                     continue;
                 }
 
-                var nextWaypoint = definition.OrderedWaypoints.FirstOrDefault();
+                zoneInside[definition.Id] = isInside;
+                if (!isInside)
+                {
+                    continue;
+                }
+
+                if (!waypointProgress.TryGetValue(definition.Id, out var nextIndex))
+                {
+                    nextIndex = 0;
+                }
+
+                if (nextIndex >= definition.OrderedWaypoints.Count)
+                {
+                    continue;
+                }
+
+                var nextWaypoint = definition.OrderedWaypoints[nextIndex];
                 if (string.IsNullOrWhiteSpace(nextWaypoint))
                 {
                     continue;
@@ -277,6 +310,14 @@ namespace SurakshaAR.Scene
                 if (update.ReturnedToLauncher)
                 {
                     ResetScene();
+                }
+                else
+                {
+                    var accepted = update.Training.NewEvents.Count == 0 || update.Training.NewEvents.Any(e => e.Outcome != ActionOutcome.Rejected);
+                    if (accepted)
+                    {
+                        waypointProgress[definition.Id] = nextIndex + 1;
+                    }
                 }
                 break;
             }
@@ -307,7 +348,15 @@ namespace SurakshaAR.Scene
                 }
 
                 var distance = Vector3.Distance(arCamera.transform.position, targetObject.transform.position);
-                if (distance > 0.8f)
+                var wasInside = zoneInside.TryGetValue(definition.Id, out var inside) && inside;
+                var isInside = distance <= 0.8f;
+                if (isInside == wasInside)
+                {
+                    continue;
+                }
+
+                zoneInside[definition.Id] = isInside;
+                if (!isInside)
                 {
                     continue;
                 }

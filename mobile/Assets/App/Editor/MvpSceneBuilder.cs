@@ -129,9 +129,9 @@ namespace SurakshaAR.Editor
             SetReference(sceneController, "planeManager", planeManager);
             SetReference(sceneController, "arCamera", camera);
             SetReference(sceneController, "scenarioPrefab", scenarioPrefab);
+            SetList(sceneController, "scenarioPrefabs", new[] { scenarioPrefab });
             SetReference(coordinator, "contentInstaller", installer);
             SetReference(coordinator, "trainingScene", sceneController);
-            SetReference(coordinator, "moduleId", moduleId);
             SetReference(coordinator, "workerId", string.Empty);
             SetReference(hud, "contentInstaller", installer);
             SetReference(hud, "trainingScene", sceneController);

@@ -63,7 +63,7 @@ namespace SurakshaAR.Remote
                             certificateCodes[attempt.Result.AttemptId] = response.certificateCode;
                         }
                     }
-                    else if (request.responseCode == 400 || request.responseCode == 422)
+                    else if (request.responseCode == 400 || request.responseCode == 422 || request.responseCode == 403)
                     {
                         rejected.Add(attempt.Result.AttemptId);
                     }
