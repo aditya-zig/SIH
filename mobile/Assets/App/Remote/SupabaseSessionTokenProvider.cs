@@ -86,7 +86,7 @@ namespace SurakshaAR.Remote
                 request.SetRequestHeader("apikey", publishableKey);
                 request.SetRequestHeader("authorization", "Bearer " + await GetAccessToken(cancellationToken));
                 request.SetRequestHeader("accept", "application/vnd.pgrst.object+json");
-                await Send(request, cancellationToken);
+                await UnityWebRequestHelper.SendAsync(request, cancellationToken);
                 if (request.result != UnityWebRequest.Result.Success)
                 {
                     throw new InvalidOperationException("The selected worker is not available for this trainer.");
@@ -115,7 +115,7 @@ namespace SurakshaAR.Remote
                 request.downloadHandler = new DownloadHandlerBuffer();
                 request.SetRequestHeader("content-type", "application/json");
                 request.SetRequestHeader("apikey", publishableKey);
-                await Send(request, cancellationToken);
+                await UnityWebRequestHelper.SendAsync(request, cancellationToken);
 
                 if (request.result != UnityWebRequest.Result.Success)
                 {
@@ -132,18 +132,6 @@ namespace SurakshaAR.Remote
                 refreshToken = response.refresh_token;
                 expiresAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + response.expires_in;
             }
-        }
-
-        private static Task Send(UnityWebRequest request, CancellationToken cancellationToken)
-        {
-            var completion = new TaskCompletionSource<bool>();
-            request.SendWebRequest().completed += _ => completion.TrySetResult(true);
-            cancellationToken.Register(() =>
-            {
-                request.Abort();
-                completion.TrySetCanceled();
-            });
-            return completion.Task;
         }
 
         [Serializable]
