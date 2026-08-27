@@ -250,13 +250,12 @@ namespace SurakshaAR.Scene
                 SemanticInteraction interaction;
                 if (definition.Kind == SemanticInteractionKind.WaypointArrived)
                 {
-                    var nextWaypoint = definition.OrderedWaypoints.FirstOrDefault();
-                    if (string.IsNullOrWhiteSpace(nextWaypoint))
+                    if (string.IsNullOrWhiteSpace(targetObject.TargetId))
                     {
                         continue;
                     }
 
-                    interaction = new SemanticInteraction(definition.Id, definition.Kind, nextWaypoint);
+                    interaction = new SemanticInteraction(definition.Id, definition.Kind, targetObject.TargetId);
                 }
                 else
                 {
