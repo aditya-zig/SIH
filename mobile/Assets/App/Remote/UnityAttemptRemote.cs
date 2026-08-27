@@ -53,7 +53,7 @@ namespace SurakshaAR.Remote
                     request.SetRequestHeader("apikey", publishableKey);
                     request.SetRequestHeader("authorization", "Bearer " + token);
 
-                    await Send(request, cancellationToken);
+                    await UnityWebRequestHelper.SendAsync(request, cancellationToken);
                     if (request.result == UnityWebRequest.Result.Success)
                     {
                         accepted.Add(attempt.Result.AttemptId);
@@ -75,19 +75,6 @@ namespace SurakshaAR.Remote
             }
 
             return new RemoteSyncResult(accepted, rejected, certificateCodes);
-        }
-
-        private static Task Send(UnityWebRequest request, CancellationToken cancellationToken)
-        {
-            var completion = new TaskCompletionSource<bool>();
-            var operation = request.SendWebRequest();
-            operation.completed += _ => completion.TrySetResult(true);
-            cancellationToken.Register(() =>
-            {
-                request.Abort();
-                completion.TrySetCanceled();
-            });
-            return completion.Task;
         }
 
         [Serializable]
