@@ -1,0 +1,20 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.surakshaar.demo'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.surakshaar.demo'
+        minSdk 23
+        targetSdk 35
+        versionCode 1
+        versionName '0.1-demo'
+    }
+}
+
+tasks.register("printApkPath") {
+    doLast { println "app/build/outputs/apk/debug/app-debug.apk" }
+}
