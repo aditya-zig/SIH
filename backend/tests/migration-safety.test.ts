@@ -1,22 +1,28 @@
 // Static safety contract for the WebAR migrations (E06).
 // No local Postgres exists in this environment (no psql/supabase CLI, docker
 // daemon down), so live replay runs under B-LIVE-SUPABASE. These tests lock the
-// reviewed safety properties of the SQL text so future edits cannot silently
-// weaken locking, grants, isolation, or immutability.
+// reviewed safety properties of the SQL/function text so future edits cannot
+// silently weaken locking, grants, isolation, immutability, or worker identity.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "supabase", "migrations");
+const backendDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+const dir = join(backendDir, "supabase", "migrations");
 
 function sql(name: string): string {
   return readFileSync(join(dir, name), "utf8");
 }
 
+function source(...parts: string[]): string {
+  return readFileSync(join(backendDir, ...parts), "utf8");
+}
+
 const m1 = () => sql("202609150001_webar_authoring_ownership.sql");
 const m2 = () => sql("202609150002_publish_training_draft.sql");
 const m3 = () => sql("202609150003_worker_sync_v2.sql");
+const syncAttempt = () => source("functions", "sync-attempt", "index.ts");
 
 describe("migration safety contract", () => {
   it("authoring migration scopes drafts and modules by organization", () => {
@@ -65,19 +71,30 @@ describe("migration safety contract", () => {
       expect(s).toMatch(/revoke all on function/);
     }
     expect(m2()).toMatch(/grant execute on function public\.publish_training_draft\(uuid\) to authenticated/);
-    // Worker RPC is service_role only: the Edge Function calls it, never the browser.
+    // Worker persistence accepts trusted server-evaluated fields, so it must
+    // remain service_role-only and must never be directly callable by workers.
     expect(m3()).not.toMatch(/to authenticated/);
     expect(m3()).toMatch(/to service_role/);
   });
 
-  it("worker sync trusts auth.uid, never the request workerId", () => {
-    const s = m3();
-    expect(s).toContain("auth.uid()");
-    expect(s).toContain("Worker identity mismatch");
-    expect(s).toContain("Worker role required");
-    expect(s).toContain("Cross-organization module access denied");
-    // Legacy NULL-org modules stay unreachable to workers.
-    expect(s).toContain("v_module_org is null");
+  it("worker sync derives identity from the verified bearer, never the request", () => {
+    const migration = m3();
+    const edge = syncAttempt();
+
+    // The Edge Function verifies the caller's bearer token using Supabase Auth.
+    expect(edge).toContain("supabase.auth.getUser(token)");
+    // Worker-v2 payloads explicitly reject a client-supplied workerId.
+    expect(edge).toContain('if ("workerId" in (value as object)) return false;');
+    // The service-role RPC receives only the verified Auth user id.
+    expect(edge).toContain("p_worker_id: userData.user.id");
+
+    // A service-role PostgREST call does not carry the worker's auth.uid().
+    // Therefore the persistence RPC must not pretend auth.uid() is the worker;
+    // it re-validates the server-provided worker id against profiles/workers.
+    expect(migration).not.toContain("auth.uid()");
+    expect(migration).toContain("Worker role required");
+    expect(migration).toContain("Cross-organization module access denied");
+    expect(migration).toContain("v_module_org is null");
   });
 
   it("worker sync keeps idempotent retry and conflict semantics", () => {
