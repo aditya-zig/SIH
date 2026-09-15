@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { backendConfigured, demoDashboard, loadDashboard, signIn, signOut, verifyCertificate } from "./data";
 import type { CertificateVerification, DashboardData } from "./types";
+import WorkerLearn from "./webar/pages/WorkerLearn";
+import { AuthorWizard, DraftReview, PackagePreview, TrainerList } from "./webar/pages/TrainerPages";
 
 function Metric({ label, value, unit }: { label: string; value: number; unit?: string }) {
   return (
@@ -44,6 +46,8 @@ function Dashboard() {
         </div>
         <div className="header-actions">
           <div className="system-state"><i /> Offline records syncing normally</div>
+          <a className="text-button" href="/app/trainings">Trainings</a>
+          <a className="text-button" href="/learn/fire-fixture-001/1">Demo worker AR</a>
           {backendConfigured && <button className="text-button" onClick={() => signOut().then(() => setAuthenticated(false))}>Sign out</button>}
         </div>
       </header>
@@ -204,6 +208,27 @@ function Verification({ code }: { code: string }) {
 }
 
 export default function App() {
-  const match = window.location.pathname.match(/^\/verify\/([^/]+)$/);
-  return match?.[1] ? <Verification code={decodeURIComponent(match[1])} /> : <Dashboard />;
+  const path = window.location.pathname;
+  const verifyMatch = path.match(/^\/verify\/([^/]+)$/);
+  if (verifyMatch?.[1]) return <Verification code={decodeURIComponent(verifyMatch[1])} />;
+  if (path === "/app/trainings") return <TrainerList />;
+  if (path === "/app/trainings/new") return <AuthorWizard />;
+  const reviewMatch = path.match(/^\/app\/trainings\/([^/]+)\/review$/);
+  if (reviewMatch?.[1]) return <DraftReview draftId={decodeURIComponent(reviewMatch[1])} />;
+  const previewMatch = path.match(/^\/app\/trainings\/([^/]+)\/([^/]+)\/preview$/);
+  if (previewMatch?.[1] && previewMatch?.[2]) {
+    const version = Number.parseInt(decodeURIComponent(previewMatch[2]), 10);
+    if (Number.isInteger(version) && version > 0)
+      return <PackagePreview packageId={decodeURIComponent(previewMatch[1])} version={version} />;
+  }
+  const learnMatch = path.match(/^\/learn\/([^/]+)\/([^/]+)$/);
+  if (learnMatch?.[1] && learnMatch?.[2]) {
+    const version = Number.parseInt(decodeURIComponent(learnMatch[2]), 10);
+    if (Number.isInteger(version) && version > 0)
+      return <WorkerLearn packageId={decodeURIComponent(learnMatch[1])} version={version} />;
+  }
+  // Legacy single-segment worker entry: /learn/:packageId → version 1 fixture.
+  const learnLegacy = path.match(/^\/learn\/([^/]+)$/);
+  if (learnLegacy?.[1]) return <WorkerLearn packageId={decodeURIComponent(learnLegacy[1])} version={1} />;
+  return <Dashboard />;
 }
