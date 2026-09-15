@@ -1,7 +1,8 @@
--- T06 — publish_training_draft RPC (transactional, immutable versions only).
+-- E06 — publish_training_draft RPC (transactional, immutable versions only).
 -- Derives caller from auth.uid(), requires trainer/admin + same org + valid
--- approval hash, creates/gets module lineage, computes next version, inserts
--- module_versions once with package_json + evaluator scenario_json.
+-- approval hash, creates/gets module lineage, allocates a version under a row
+-- lock, and inserts immutable package_json + evaluator scenario_json.
+-- Re-publishing the exact same reviewed draft revision is idempotent.
 -- Never UPDATEs a published version (immutable trigger still enforced).
 
 create or replace function public.publish_training_draft(p_draft_id uuid)
@@ -18,6 +19,8 @@ declare
   v_module_id uuid;
   v_slug text;
   v_next_version integer;
+  v_existing_version integer;
+  v_existing_hash text;
   v_package jsonb;
   v_scenario jsonb;
   v_content_hash text;
@@ -47,28 +50,25 @@ begin
     raise exception 'Draft approval is invalid or stale; re-approval required' using errcode = '23514';
   end if;
 
-  -- Package + scenario come from reviewed draft_json. P0 expects:
-  -- draft_json = { title, workplaceId, package, scenario }.
-  v_package := v_draft.draft_json -> 'package';
-  v_scenario := v_draft.draft_json -> 'scenario';
+  -- Projections are stored separately from draft_json so content_hash continues
+  -- to pin the exact trainer-reviewed TrainingDraft rather than an envelope.
+  v_package := v_draft.package_json;
+  v_scenario := v_draft.scenario_json;
   if v_package is null or v_scenario is null then
     raise exception 'Draft is missing package/scenario projection' using errcode = '23514';
   end if;
 
-  v_content_hash := encode(digest(v_package::text, 'sha256'), 'hex');
-
-  -- Lineage: one training_modules row per (org, template). Slug is globally
-  -- unique so it embeds an org prefix. Never reuse another org's lineage.
-  -- Concurrency: two publishers racing here must not create duplicate slugs
-  -- or versions. The lineage upsert is conflict-safe on the unique slug, and
-  -- the version number is allocated while holding a row lock on the lineage,
-  -- so concurrent publishes serialize and observe each other's versions.
-  v_slug := 'webar-' || left(v_draft.template_id, 40) || '-' || left(replace(v_draft.organization_id::text, '-', ''), 8);
+  -- Lineage: one training_modules row per (org, template). The full org UUID is
+  -- embedded in the globally unique slug to avoid cross-org prefix collisions.
+  v_slug := 'webar-' || left(v_draft.template_id, 40) || '-' || replace(v_draft.organization_id::text, '-', '');
 
   insert into public.training_modules (slug, title_key, active, organization_id)
   values (v_slug, v_draft.template_id, true, v_draft.organization_id)
   on conflict (slug) do nothing;
 
+  -- Serialize every publication for this lineage. A second request for the same
+  -- draft revision waits here, then observes and returns the version inserted by
+  -- the first request instead of creating an identical duplicate version.
   select id into v_module_id from public.training_modules
   where slug = v_slug and organization_id = v_draft.organization_id
   for update;
@@ -77,8 +77,29 @@ begin
     raise exception 'Module lineage could not be established' using errcode = 'P0002';
   end if;
 
+  select version, content_hash
+  into v_existing_version, v_existing_hash
+  from public.module_versions
+  where source_draft_id = v_draft.id
+    and source_draft_revision = v_draft.revision;
+
+  if found then
+    return jsonb_build_object(
+      'moduleId', v_module_id,
+      'slug', v_slug,
+      'version', v_existing_version,
+      'contentHash', v_existing_hash,
+      'idempotent', true
+    );
+  end if;
+
   select coalesce(max(version), 0) + 1 into v_next_version
   from public.module_versions where module_id = v_module_id;
+
+  -- The stored package must identify the immutable version actually allocated by
+  -- the database, not the preview placeholder version from the draft projection.
+  v_package := jsonb_set(v_package, '{version}', to_jsonb(v_next_version), true);
+  v_content_hash := encode(digest(v_package::text, 'sha256'), 'hex');
 
   insert into public.module_versions (
     module_id, version, scenario_json, content_hash,
@@ -94,7 +115,8 @@ begin
     'moduleId', v_module_id,
     'slug', v_slug,
     'version', v_next_version,
-    'contentHash', v_content_hash
+    'contentHash', v_content_hash,
+    'idempotent', false
   );
 end;
 $$;
