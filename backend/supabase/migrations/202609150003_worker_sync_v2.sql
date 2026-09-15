@@ -1,10 +1,13 @@
--- T08 — worker-safe sync RPC (auth.uid() is the worker; never trust client workerId).
--- Keeps legacy persist_evaluated_attempt untouched for historical trainer clients.
--- New function mirrors its idempotency (same attemptId + same evidence → same
--- result; same attemptId + different evidence → error 'different evidence' which
--- the Edge Function maps to 409) but authorizes worker role + same-org module.
--- Evidence hash input is computed by the Edge Function from module/version +
--- sorted events (same canonicalization as v1).
+-- E06 — worker-safe sync persistence RPC.
+-- The Edge Function verifies the bearer token with Supabase Auth, rejects any
+-- request-supplied workerId, and passes only the verified user id as p_worker_id.
+-- This RPC is deliberately service_role-only because it accepts server-evaluated
+-- score/event fields; exposing it to authenticated browser clients would let a
+-- worker forge trusted evaluation results.
+--
+-- Idempotency: same attemptId + same evidence returns the existing result;
+-- same attemptId + different evidence raises 'different evidence', which the
+-- Edge Function maps to HTTP 409.
 
 create or replace function public.persist_worker_evaluated_attempt(
   p_attempt_id uuid,
@@ -27,9 +30,7 @@ security definer
 set search_path = public, extensions
 as $$
 declare
-  v_caller uuid := auth.uid();
   v_role text;
-  v_caller_org uuid;
   v_worker_org uuid;
   v_module_org uuid;
   existing_worker_id uuid;
@@ -41,29 +42,24 @@ declare
   issuer_authorized boolean;
   inserted_count integer;
 begin
-  if v_caller is null or v_caller <> p_worker_id then
-    raise exception 'Worker identity mismatch' using errcode = '42501';
-  end if;
-
-  select role, organization_id into v_role, v_caller_org
-  from public.profiles where id = v_caller;
-  if v_role <> 'worker' then
-    raise exception 'Worker role required' using errcode = '42501';
-  end if;
-
-  select profile.organization_id into v_worker_org
+  -- p_worker_id is trusted only because this function is service_role-only and
+  -- the Edge Function derives it from auth.getUser(bearerToken), never from the
+  -- request body. Re-validate role and organization here before any write.
+  select profile.role, profile.organization_id
+  into v_role, v_worker_org
   from public.workers worker
   join public.profiles profile on profile.id = worker.id
   where worker.id = p_worker_id;
-  if v_worker_org is null or v_worker_org <> v_caller_org then
-    raise exception 'Worker organization mismatch' using errcode = '42501';
+
+  if v_role is distinct from 'worker' or v_worker_org is null then
+    raise exception 'Worker role required' using errcode = '42501';
   end if;
 
   select organization_id into v_module_org
   from public.training_modules where id = p_module_id;
-  -- Legacy modules with NULL org are not downloadable by workers (T05 policy);
-  -- deny worker writes to them explicitly.
-  if v_module_org is null or v_module_org <> v_caller_org then
+  -- Legacy modules with NULL org are not downloadable by workers; deny writes
+  -- to them explicitly as well.
+  if v_module_org is null or v_module_org <> v_worker_org then
     raise exception 'Cross-organization module access denied' using errcode = '42501';
   end if;
 
@@ -130,14 +126,14 @@ begin
   from jsonb_array_elements(p_events) event;
 
   select can_issue_certificates into issuer_authorized
-  from public.organizations where id = v_caller_org;
+  from public.organizations where id = v_worker_org;
 
   if p_passed and coalesce(issuer_authorized, false) then
     issued_code := 'CERT-' || upper(encode(extensions.gen_random_bytes(8), 'hex'));
     insert into public.certificates (
       certificate_code, worker_id, attempt_id, module_id, module_version, score, issuer_organization_id
     ) values (
-      issued_code, p_worker_id, p_attempt_id, p_module_id, p_module_version, p_server_score, v_caller_org
+      issued_code, p_worker_id, p_attempt_id, p_module_id, p_module_version, p_server_score, v_worker_org
     );
   end if;
 
