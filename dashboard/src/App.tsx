@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { backendConfigured, demoDashboard, loadDashboard, signIn, signOut, verifyCertificate } from "./data";
 import type { CertificateVerification, DashboardData } from "./types";
-import WorkerLearn from "./webar/pages/WorkerLearn";
-import { AuthorWizard, DraftReview, PackagePreview, TrainerList } from "./webar/pages/TrainerPages";
+import WorkerLearn from "./webar/pages/WorkerEntry";
+import { AuthorWizard, DraftReview, PackagePreview, TrainerList } from "./webar/pages/TrainerPagesBridge";
 
 function Metric({ label, value, unit }: { label: string; value: number; unit?: string }) {
   return (
@@ -227,7 +227,6 @@ export default function App() {
     if (Number.isInteger(version) && version > 0)
       return <WorkerLearn packageId={decodeURIComponent(learnMatch[1])} version={version} />;
   }
-  // Legacy single-segment worker entry: /learn/:packageId → version 1 fixture.
   const learnLegacy = path.match(/^\/learn\/([^/]+)$/);
   if (learnLegacy?.[1]) return <WorkerLearn packageId={decodeURIComponent(learnLegacy[1])} version={1} />;
   return <Dashboard />;
