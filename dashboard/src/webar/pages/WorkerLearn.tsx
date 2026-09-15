@@ -11,12 +11,11 @@ import {
   storeCompletePackage,
 } from "../offline/attemptQueue.js";
 import {
+  ARPlacementTracker,
   DEFAULT_ROOT_POSITION,
-  enterAR,
   isImmersiveArSupported,
   mountTrainingScene,
   placeRootAt,
-  setReticleVisible,
   speakInstruction,
   type MountedScene,
   type RuntimeStatus,
@@ -40,6 +39,7 @@ export default function WorkerLearn({ packageId, version }: { packageId: string;
   const [score, setScore] = useState<number | null>(null);
   const sceneRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef<MountedScene | null>(null);
+  const trackerRef = useRef<ARPlacementTracker | null>(null);
   const pkg = fireFixturePackage;
   const isFixture = packageId === pkg.packageId && version === pkg.version;
 
@@ -84,7 +84,7 @@ export default function WorkerLearn({ packageId, version }: { packageId: string;
   interactRef.current = interact;
 
   // Mount once when the run starts. Preview places the root deterministically;
-  // AR enters an immersive session first and waits for an explicit tap.
+  // AR starts a real hit-test tracked session and waits for a valid surface.
   useEffect(() => {
     if (phase !== "running" || !sceneRef.current || !runMode) return;
     try {
@@ -100,19 +100,29 @@ export default function WorkerLearn({ packageId, version }: { packageId: string;
         speakInstruction(pkg.trainingSteps[0]?.voiceText ?? "");
       } else {
         setRuntimeStatus("XR_ENTERING");
-        void enterAR(mounted.scene).then((status) => {
-          if (status === "PLACING") {
-            setRuntimeStatus("PLACING");
-            setReticleVisible(mounted.reticle, true);
-          } else {
-            // UNSUPPORTED_XR / XR_FAILED: shown honestly, never labeled AR.
-            setRuntimeStatus(status);
-          }
+        const tracker = new ARPlacementTracker(mounted.root, mounted.reticle, {
+          onStatus: setRuntimeStatus,
+          onPlaced: () => {
+            setPlaced(true);
+            setRuntimeStatus("ACTIVE");
+            speakInstruction(pkg.trainingSteps[0]?.voiceText ?? "");
+          },
+        });
+        trackerRef.current = tracker;
+        void tracker.start(mounted.scene).then((status) => {
+          // PLACING keeps the reticle hidden until a real hit pose arrives;
+          // UNSUPPORTED_XR / XR_FAILED render honestly and never claim AR.
+          setRuntimeStatus(status);
         });
       }
     } catch (e) {
       setFeedback(e instanceof Error ? e.message : "Scene failed to mount");
     }
+    return () => {
+      trackerRef.current?.stop();
+      trackerRef.current = null;
+      mountedRef.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, runMode]);
 
@@ -146,16 +156,11 @@ export default function WorkerLearn({ packageId, version }: { packageId: string;
     setPhase("running");
   };
 
-  // AR tap stands in for the XR select event until session-select wiring lands.
-  // It only runs inside a real entered session (PLACING); desktop never reaches it.
+  // On-screen lock shares the real select path: it only places from a
+  // currently valid reticle pose, never from a fixed origin.
   const lockPlacement = () => {
-    const mounted = mountedRef.current;
-    if (!mounted) return;
-    placeRootAt(mounted.root, DEFAULT_ROOT_POSITION);
-    setReticleVisible(mounted.reticle, false);
-    setPlaced(true);
-    setRuntimeStatus("ACTIVE");
-    speakInstruction(current?.voiceText ?? "");
+    const placedNow = trackerRef.current?.placeFromReticle() ?? false;
+    if (!placedNow) setFeedback("No surface detected yet — aim at a surface until the reticle appears.");
   };
 
   const finish = async (correct: boolean) => {

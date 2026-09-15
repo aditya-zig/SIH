@@ -259,6 +259,217 @@ export function applyHitPose(
   return placed;
 }
 
+// ---- E03: real WebXR hit-test placement ----
+// The session init below is what A-Frame receives through the `webxr`
+// component: immersive-ar with hit-test required, local-floor preferred.
+// Desktop preview never touches this path; it uses DEFAULT_ROOT_POSITION.
+export const AR_SESSION_INIT = {
+  requiredFeatures: ["hit-test"],
+  optionalFeatures: ["local-floor"],
+} as const;
+
+export function configureARFeatures(sceneEl: HTMLElement): void {
+  sceneEl.setAttribute(
+    "webxr",
+    `requiredFeatures: ${AR_SESSION_INIT.requiredFeatures.join(",")}; ` +
+      `optionalFeatures: ${AR_SESSION_INIT.optionalFeatures.join(",")}`,
+  );
+}
+
+// Minimal structural XR types so unit tests can inject doubles. The real
+// WebXR objects satisfy these shapes; no DOM XR globals are referenced here.
+export type XRPoseLike = {
+  transform: {
+    position: { x: number; y: number; z: number };
+    orientation?: { x: number; y: number; z: number; w: number };
+  };
+};
+export type XRReferenceSpaceLike = object;
+export type XRHitTestSourceLike = { cancel: () => void };
+export type XRHitResultLike = {
+  getPose: (space: XRReferenceSpaceLike) => XRPoseLike | null | undefined;
+};
+export type XRFrameLike = {
+  getHitTestResults: (source: XRHitTestSourceLike) => XRHitResultLike[];
+};
+export type XRSessionLike = {
+  requestReferenceSpace: (type: string) => Promise<XRReferenceSpaceLike>;
+  requestHitTestSource: (opts: { space: XRReferenceSpaceLike }) => Promise<XRHitTestSourceLike>;
+  requestAnimationFrame: (cb: (time: number, frame: XRFrameLike) => void) => number;
+  cancelAnimationFrame?: (id: number) => void;
+  addEventListener: (type: string, cb: () => void) => void;
+  removeEventListener: (type: string, cb: () => void) => void;
+  end?: () => Promise<void>;
+};
+
+export type HitPose = {
+  position: [number, number, number];
+  orientation?: [number, number, number, number];
+};
+
+// Pure hit extraction: first valid result wins, anything else is no-hit.
+export function extractHitPose(
+  frame: XRFrameLike,
+  hitSource: XRHitTestSourceLike,
+  refSpace: XRReferenceSpaceLike,
+): HitPose | null {
+  let results: XRHitResultLike[];
+  try {
+    results = frame.getHitTestResults(hitSource);
+  } catch {
+    return null;
+  }
+  const hit = results[0];
+  if (!hit) return null;
+  let pose: XRPoseLike | null | undefined;
+  try {
+    pose = hit.getPose(refSpace);
+  } catch {
+    return null;
+  }
+  if (!pose) return null;
+  const p = pose.transform.position;
+  if (![p.x, p.y, p.z].every((n) => Number.isFinite(n))) return null;
+  const o = pose.transform.orientation;
+  return {
+    position: [p.x, p.y, p.z],
+    ...(o ? { orientation: [o.x, o.y, o.z, o.w] as [number, number, number, number] } : {}),
+  };
+}
+
+export type ARTrackerHooks = {
+  isSupported?: () => Promise<boolean>;
+  onStatus?: (status: RuntimeStatus) => void;
+  onPlaced?: (position: [number, number, number]) => void;
+};
+
+// Owns one immersive-AR placement episode: session entry, hit-test source,
+// per-frame reticle updates, select-to-place, and full cleanup. Preview mode
+// never constructs this; it is AR-only.
+export class ARPlacementTracker {
+  latestPose: HitPose | null = null;
+  private session: XRSessionLike | null = null;
+  private hitSource: XRHitTestSourceLike | null = null;
+  private running = false;
+  private rafId = 0;
+  private readonly onSelect = (): void => {
+    this.placeFromReticle();
+  };
+  private readonly onEnded = (): void => {
+    this.stop();
+    this.hooks.onStatus?.("READY");
+  };
+
+  constructor(
+    private readonly rootEl: HTMLElement,
+    private readonly reticleEl: HTMLElement,
+    private readonly hooks: ARTrackerHooks = {},
+  ) {}
+
+  get isTracking(): boolean {
+    return this.running;
+  }
+
+  async start(sceneEl: HTMLElement): Promise<RuntimeStatus> {
+    const supported = await (this.hooks.isSupported ?? isImmersiveArSupported)();
+    if (!supported) return "UNSUPPORTED_XR";
+    configureARFeatures(sceneEl);
+    const el = sceneEl as HTMLElement & {
+      enterAR?: () => Promise<void>;
+      enterVR?: () => Promise<void>;
+      renderer?: { xr?: { getSession: () => XRSessionLike | null } };
+    };
+    try {
+      if (typeof el.enterAR === "function") await el.enterAR();
+      else if (typeof el.enterVR === "function") await el.enterVR();
+      else return "XR_FAILED";
+    } catch {
+      return "XR_FAILED";
+    }
+    const session = el.renderer?.xr?.getSession() ?? null;
+    if (!session) return "XR_FAILED";
+    let viewerSpace: XRReferenceSpaceLike;
+    try {
+      viewerSpace = await session.requestReferenceSpace("viewer");
+    } catch {
+      return "XR_FAILED";
+    }
+    try {
+      this.hitSource = await session.requestHitTestSource({ space: viewerSpace });
+    } catch {
+      return "XR_FAILED";
+    }
+    // local-floor keeps the root at floor height; viewer space still works.
+    let refSpace: XRReferenceSpaceLike;
+    try {
+      refSpace = await session.requestReferenceSpace("local-floor");
+    } catch {
+      try {
+        refSpace = await session.requestReferenceSpace("viewer");
+      } catch {
+        return "XR_FAILED";
+      }
+    }
+    this.session = session;
+    this.refSpace = refSpace;
+    this.running = true;
+    session.addEventListener("select", this.onSelect);
+    session.addEventListener("end", this.onEnded);
+    this.rafId = session.requestAnimationFrame(this.onFrame);
+    return "PLACING";
+  }
+
+  private refSpace: XRReferenceSpaceLike | null = null;
+
+  private readonly onFrame = (time: number, frame: XRFrameLike): void => {
+    void time;
+    if (!this.running || !this.session || !this.hitSource || !this.refSpace) return;
+    const pose = extractHitPose(frame, this.hitSource, this.refSpace);
+    if (pose) {
+      this.latestPose = pose;
+      this.reticleEl.setAttribute("position", formatVec3(pose.position));
+      setReticleVisible(this.reticleEl, true);
+    } else {
+      this.latestPose = null;
+      setReticleVisible(this.reticleEl, false);
+    }
+    this.rafId = this.session.requestAnimationFrame(this.onFrame);
+  };
+
+  // Real XR select path and the on-screen lock button share this: placement
+  // requires a currently visible, valid reticle pose. Never a fixed origin.
+  placeFromReticle(): boolean {
+    if (!this.running || !this.latestPose) return false;
+    const position = this.latestPose.position;
+    applyHitPose(this.rootEl, this.reticleEl, position);
+    this.latestPose = null;
+    this.running = false;
+    this.hooks.onPlaced?.(position);
+    return true;
+  }
+
+  stop(): void {
+    this.running = false;
+    this.latestPose = null;
+    try {
+      this.hitSource?.cancel();
+    } catch {
+      // Best effort; a dead session must not break unmount.
+    }
+    this.hitSource = null;
+    this.session?.removeEventListener("select", this.onSelect);
+    this.session?.removeEventListener("end", this.onEnded);
+    const session = this.session;
+    this.session = null;
+    this.refSpace = null;
+    try {
+      void session?.end?.();
+    } catch {
+      // Best effort.
+    }
+  }
+}
+
 // Voice provider boundary. Text instruction always visible; voice failure never blocks.
 export type VoiceProvider = {
   speak: (text: string) => boolean;
