@@ -59,15 +59,22 @@ begin
 
   -- Lineage: one training_modules row per (org, template). Slug is globally
   -- unique so it embeds an org prefix. Never reuse another org's lineage.
+  -- Concurrency: two publishers racing here must not create duplicate slugs
+  -- or versions. The lineage upsert is conflict-safe on the unique slug, and
+  -- the version number is allocated while holding a row lock on the lineage,
+  -- so concurrent publishes serialize and observe each other's versions.
   v_slug := 'webar-' || left(v_draft.template_id, 40) || '-' || left(replace(v_draft.organization_id::text, '-', ''), 8);
 
+  insert into public.training_modules (slug, title_key, active, organization_id)
+  values (v_slug, v_draft.template_id, true, v_draft.organization_id)
+  on conflict (slug) do nothing;
+
   select id into v_module_id from public.training_modules
-  where slug = v_slug and organization_id = v_draft.organization_id;
+  where slug = v_slug and organization_id = v_draft.organization_id
+  for update;
 
   if not found then
-    insert into public.training_modules (slug, title_key, active, organization_id)
-    values (v_slug, v_draft.template_id, true, v_draft.organization_id)
-    returning id into v_module_id;
+    raise exception 'Module lineage could not be established' using errcode = 'P0002';
   end if;
 
   select coalesce(max(version), 0) + 1 into v_next_version
