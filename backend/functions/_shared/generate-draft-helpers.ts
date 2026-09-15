@@ -46,6 +46,8 @@ export function validateDraftJson(draft: unknown): string[] {
   for (const key of ["draftId", "templateId", "sceneSummary", "workplaceType"]) {
     if (typeof d[key] !== "string" || !(d[key] as string)) errors.push(`${key} is required.`);
   }
+  if (!Number.isInteger(d["templateVersion"]) || Number(d["templateVersion"]) < 1)
+    errors.push("templateVersion must be a positive integer.");
   if (!Array.isArray(d["trainingSteps"]) || (d["trainingSteps"] as unknown[]).length === 0)
     errors.push("trainingSteps must contain at least one step.");
   if (!Array.isArray(d["arObjects"])) errors.push("arObjects must be an array.");
@@ -57,7 +59,6 @@ export function validateDraftJson(draft: unknown): string[] {
       break;
     }
   }
-  // Arbitrary external asset URLs are rejected (trusted catalog only).
   const urlRe = /https?:\/\/[^\s"']+/gi;
   const urls = blob.match(urlRe) ?? [];
   const allowedHosts = ["openrouter.ai"];
@@ -76,6 +77,25 @@ export function validateDraftJson(draft: unknown): string[] {
   return errors;
 }
 
+export function validateDraftIdentity(draft: unknown, request: DraftRequest): string[] {
+  if (!draft || typeof draft !== "object") return ["Draft identity is missing."];
+  const d = draft as Record<string, unknown>;
+  const errors: string[] = [];
+  if (d["draftId"] !== request.draftId) errors.push("draftId does not match the requested draft.");
+  if (d["templateId"] !== request.templateId) errors.push("templateId does not match the requested template.");
+  if (d["templateVersion"] !== request.templateVersion) errors.push("templateVersion does not match the requested template version.");
+  return errors;
+}
+
+export function mediaBelongsToDraft(
+  media: DraftRequest["media"],
+  organizationId: string,
+  draftId: string,
+): boolean {
+  const prefix = `${organizationId}/${draftId}/`;
+  return media.every((item) => item.storagePath.startsWith(prefix) && !item.storagePath.slice(prefix.length).includes("/../"));
+}
+
 export function cacheKey(req: DraftRequest, templateHash: string): string {
   return JSON.stringify({
     templateId: req.templateId,
@@ -88,7 +108,6 @@ export function cacheKey(req: DraftRequest, templateHash: string): string {
   });
 }
 
-// P0 media policy mirrors the browser staging limits.
 export const ALLOWED_MEDIA_MIME = ["image/jpeg", "image/png", "image/webp", "video/mp4"];
 export const MAX_MEDIA_FILES = 10;
 export const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
@@ -108,9 +127,6 @@ export function validateMediaRefs(
   return { ok: true };
 }
 
-// Stale-generation guard: a result computed for an older revision/hash must
-// never overwrite the trainer's newer edits. Returns 'stale' when the caller
-// pinned expectations and the current row no longer matches them.
 export function checkStale(
   current: { revision: number; contentHash: string },
   expected?: { revision?: number; contentHash?: string },
@@ -122,15 +138,10 @@ export function checkStale(
 }
 
 export type VisionMedia = { mimeType: string; base64: string };
-
 export type PromptPart =
   | { type: "text"; text: string }
   | { type: "image_url"; image_url: { url: string } };
 
-// Server downloads authorized bytes with the service role and embeds them as
-// data URLs, so the model sees actual workplace media instead of opaque paths.
-// Only image bytes are embedded; video refs stay as validated metadata until a
-// frame-extraction step lands.
 export function buildVisionContent(
   req: DraftRequest,
   templateJson: unknown,
@@ -140,6 +151,7 @@ export function buildVisionContent(
     {
       type: "text",
       text: JSON.stringify({
+        draftId: req.draftId,
         template: templateJson,
         workplaceName: req.workplaceName,
         trainerInstructions: req.trainerInstructions,
@@ -155,6 +167,7 @@ export function buildVisionContent(
       role: "system",
       content:
         "You adapt an approved safety template to a workplace. Return STRICT JSON only matching TrainingDraft. " +
+        "Preserve the supplied draftId, templateId and templateVersion exactly. " +
         "Do not invent or alter safety invariants, pass rules, or critical-failure rules. " +
         "No JavaScript, HTML, executable scripts, or arbitrary asset URLs. Unknown fire type, route safety, or geometry requires trainer confirmation fields.",
     },
@@ -168,12 +181,13 @@ export function buildPrompt(req: DraftRequest, templateJson: unknown): Array<{ r
       role: "system",
       content:
         "You adapt an approved safety template to a workplace. Return STRICT JSON only matching TrainingDraft. " +
+        "Preserve the supplied draftId, templateId and templateVersion exactly. " +
         "Do not invent or alter safety invariants, pass rules, or critical-failure rules. " +
         "No JavaScript, HTML, executable scripts, or arbitrary asset URLs. Unknown fire type, route safety, or geometry requires trainer confirmation fields.",
     },
     {
       role: "user",
-      content: JSON.stringify({ template: templateJson, workplaceName: req.workplaceName, media: req.media, trainerInstructions: req.trainerInstructions, locale: req.locale }),
+      content: JSON.stringify({ draftId: req.draftId, template: templateJson, workplaceName: req.workplaceName, media: req.media, trainerInstructions: req.trainerInstructions, locale: req.locale }),
     },
   ];
 }
