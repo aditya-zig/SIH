@@ -1,5 +1,7 @@
 # Keep platform-native languages
 
-The team will keep Unity and AR Foundation code in C#, Supabase Edge Functions and the React dashboard in TypeScript, and database rules in SQL. Although all six team members currently know Python, replacing these languages would require abandoning Unity or adding separately hosted services while leaving C# and browser code in place. Python will not be part of the production stack.
+Status: Unity portion superseded by the WebAR direction on 15 September 2026.
 
-The team will work in three stable pairs. The Unity pair owns AR interactions and mobile behavior, the backend pair owns Supabase functions and SQL, and the dashboard pair owns React and localization. Each pair will learn against this repository, use its existing tests, and review changes together before taking on its assigned code-review findings.
+The earlier decision kept Unity/AR Foundation in C#, the React dashboard and Supabase Edge Functions in TypeScript, and database rules in SQL. Its Unity pair and APK responsibilities are historical; the mobile client has been removed.
+
+The current direction retains TypeScript for browser/backend work and SQL for database rules, and replaces the Unity client with browser A-Frame/WebXR. See the [WebAR execution Bible](https://app.notion.com/p/3dc074fda55681d8942fff9b7c50e490). This explicitly supersedes the Unity portion of this ADR; it does not claim the replacement runtime is complete.

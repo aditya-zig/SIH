@@ -2,30 +2,8 @@
 
 This repository uses a single domain context.
 
-## Before exploring
+Before exploring, read CONTEXT.md and relevant ADRs under docs/adr/. Use glossary terms in specifications, tests and code discussions.
 
-- Read `CONTEXT.md` at the repository root.
-- Read ADRs under `docs/adr/` that affect the area being changed.
-- If either location does not exist, proceed without calling out its absence.
+Current product areas are backend/ and dashboard/. The Unity mobile/ client is retired. See docs/spec.md and docs/INTEGRATION.md for the WebAR direction and repository boundary.
 
-The domain-modeling workflow creates glossary and ADR files lazily when the team resolves terms or decisions.
-
-## Layout
-
-```text
-/
-├── CONTEXT.md
-├── docs/
-│   └── adr/
-└── mobile, backend, dashboard
-```
-
-## Vocabulary
-
-Use terms as defined in `CONTEXT.md` in issue titles, specifications, tests, and code discussions. Do not replace defined terms with loose synonyms.
-
-If a needed concept is missing, first check whether existing vocabulary already covers it. Use domain modeling when the gap represents a real domain distinction.
-
-## ADR conflicts
-
-Surface any conflict with an existing ADR instead of silently overriding it. Name the ADR and explain why the decision may need to be reopened.
+Surface ADR conflicts explicitly instead of silently overriding historical decisions.
