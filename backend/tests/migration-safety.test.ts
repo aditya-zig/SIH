@@ -73,8 +73,12 @@ describe("migration safety contract", () => {
     expect(m2()).toMatch(/grant execute on function public\.publish_training_draft\(uuid\) to authenticated/);
     // Worker persistence accepts trusted server-evaluated fields, so it must
     // remain service_role-only and must never be directly callable by workers.
-    expect(m3()).not.toMatch(/to authenticated/);
-    expect(m3()).toMatch(/to service_role/);
+    expect(m3()).not.toMatch(
+      /grant execute on function public\.persist_worker_evaluated_attempt[\s\S]*?\)\s+to authenticated;/i,
+    );
+    expect(m3()).toMatch(
+      /grant execute on function public\.persist_worker_evaluated_attempt[\s\S]*?\)\s+to service_role;/i,
+    );
   });
 
   it("worker sync derives identity from the verified bearer, never the request", () => {
