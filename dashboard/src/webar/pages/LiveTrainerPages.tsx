@@ -16,11 +16,6 @@ import { FIRE_FIXTURE_LABEL } from "../templates/fire.fixture.js";
 
 const FIRE_TEMPLATE = "fire-safety-induction";
 
-function videoFrameName(name: string): string {
-  const stem = name.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9._-]/g, "_");
-  return `${stem || "video"}-ai-frame.jpg`;
-}
-
 async function extractVideoPosterFrame(file: File): Promise<File> {
   const objectUrl = URL.createObjectURL(file);
   try {
@@ -60,9 +55,14 @@ async function extractVideoPosterFrame(file: File): Promise<File> {
     if (!context) throw new Error(`${file.name}: canvas unavailable`);
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
     const blob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((value) => value ? resolve(value) : reject(new Error(`${file.name}: frame encoding failed`)), "image/jpeg", 0.86);
+      canvas.toBlob(
+        (value) => value ? resolve(value) : reject(new Error(`${file.name}: frame encoding failed`)),
+        "image/jpeg",
+        0.86,
+      );
     });
-    return new File([blob], videoFrameName(file.name), { type: "image/jpeg" });
+    const stem = file.name.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9._-]/g, "_") || "video";
+    return new File([blob], `${stem}-ai-frame.jpg`, { type: "image/jpeg" });
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
@@ -72,10 +72,18 @@ async function deriveVideoFrames(files: File[]): Promise<File[]> {
   return Promise.all(files.filter((file) => file.type === "video/mp4").map(extractVideoPosterFrame));
 }
 
-function normalizeGeneratedDraft(value: unknown, shell: TrainingDraft, sourceMedia: TrainingDraft["sourceMedia"]): TrainingDraft {
+function normalizeGeneratedDraft(
+  value: unknown,
+  shell: TrainingDraft,
+  sourceMedia: TrainingDraft["sourceMedia"],
+): TrainingDraft {
   if (!value || typeof value !== "object") throw new Error("AI returned an invalid draft");
   const draft = value as TrainingDraft;
-  if (draft.draftId !== shell.draftId || draft.templateId !== shell.templateId || draft.templateVersion !== shell.templateVersion) {
+  if (
+    draft.draftId !== shell.draftId ||
+    draft.templateId !== shell.templateId ||
+    draft.templateVersion !== shell.templateVersion
+  ) {
     throw new Error("AI draft identity does not match the requested draft");
   }
   return { ...draft, sourceMedia, reviewStatus: "AI_DRAFT" };
@@ -109,8 +117,21 @@ export function AuthorWizard() {
       const draftId = crypto.randomUUID();
       const liveSession = await getLiveSupabaseSession();
       if (!liveSession) {
-        const shell = demoDraftFromFixture({ draftId, workplaceName: workplaceName.trim(), trainerInstructions: instructions.trim(), mediaNames: files.map((f) => f.name), locale });
-        await localDraftStore.create({ draftId, organizationId: "local", trainerId: "local-trainer", templateId: FIRE_TEMPLATE, templateVersion: 1, draft: shell });
+        const shell = demoDraftFromFixture({
+          draftId,
+          workplaceName: workplaceName.trim(),
+          trainerInstructions: instructions.trim(),
+          mediaNames: files.map((file) => file.name),
+          locale,
+        });
+        await localDraftStore.create({
+          draftId,
+          organizationId: "local",
+          trainerId: "local-trainer",
+          templateId: FIRE_TEMPLATE,
+          templateVersion: 1,
+          draft: shell,
+        });
         window.location.href = `/app/trainings/${draftId}/review`;
         return;
       }
@@ -128,7 +149,13 @@ export function AuthorWizard() {
       if (!aiRefs.length) throw new Error("No visual frame could be prepared for AI analysis");
 
       const shell: TrainingDraft = {
-        ...demoDraftFromFixture({ draftId, workplaceName: workplaceName.trim(), trainerInstructions: instructions.trim(), mediaNames: files.map((f) => f.name), locale }),
+        ...demoDraftFromFixture({
+          draftId,
+          workplaceName: workplaceName.trim(),
+          trainerInstructions: instructions.trim(),
+          mediaNames: files.map((file) => file.name),
+          locale,
+        }),
         sourceMedia: sourceRefs,
       };
       let stored = await localDraftStore.create({
@@ -164,7 +191,9 @@ export function AuthorWizard() {
           throw remoteError;
         }
       } catch (aiError) {
-        setErrors([`AI generation unavailable (${aiError instanceof Error ? aiError.message : "error"}). The labeled trainer-reviewable demo draft was preserved.`]);
+        setErrors([
+          `AI generation unavailable (${aiError instanceof Error ? aiError.message : "error"}). The labeled demo draft was preserved for trainer review.`,
+        ]);
       }
       window.location.href = `/app/trainings/${draftId}/review`;
     } catch (reason) {
@@ -174,22 +203,24 @@ export function AuthorWizard() {
     }
   };
 
-  return <main className="shell">
-    <p className="eyebrow">Trainer / New training</p>
-    <h1>Author training</h1>
-    <div className="demo-strip">{DEMO_SAMPLE_LABEL}</div>
-    <form className="panel performance" onSubmit={submit}>
-      <div className="panel-heading"><h2>Workplace → Fire template → review</h2><span>trainer approval required</span></div>
-      <label>Workplace name<input value={workplaceName} onChange={(e) => setWorkplaceName(e.target.value)} placeholder="Mine A, Workshop 3…" /></label>
-      <label>Template<select value={FIRE_TEMPLATE} disabled><option value={FIRE_TEMPLATE}>Fire Safety Induction</option></select></label>
-      <label>Locale<select value={locale} onChange={(e) => setLocale(e.target.value)}><option value="en-IN">English (India)</option><option value="hi-IN">Hindi</option></select></label>
-      <label>Trainer instructions<textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={3} /></label>
-      <label>Workplace photos or MP4 video<input ref={fileRef} type="file" multiple accept="image/jpeg,image/png,image/webp,video/mp4" onChange={pickFiles} /></label>
-      {files.length > 0 && <p className="empty">{files.length} source file(s). MP4 files generate a private JPEG evidence frame for AI analysis.</p>}
-      {errors.map((message) => <p className="form-error" key={message}>{message}</p>)}
-      <button className="primary-button" disabled={busy}>{busy ? "Creating…" : "Generate draft"}</button>
-    </form>
-  </main>;
+  return (
+    <main className="shell">
+      <p className="eyebrow">Trainer / New training</p>
+      <h1>Author training</h1>
+      <div className="demo-strip">{DEMO_SAMPLE_LABEL}</div>
+      <form className="panel performance" onSubmit={submit}>
+        <div className="panel-heading"><h2>Workplace → Fire template → review</h2><span>trainer approval required</span></div>
+        <label>Workplace name<input value={workplaceName} onChange={(event) => setWorkplaceName(event.target.value)} /></label>
+        <label>Template<select value={FIRE_TEMPLATE} disabled><option value={FIRE_TEMPLATE}>Fire Safety Induction</option></select></label>
+        <label>Locale<select value={locale} onChange={(event) => setLocale(event.target.value)}><option value="en-IN">English (India)</option><option value="hi-IN">Hindi</option></select></label>
+        <label>Trainer instructions<textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} rows={3} /></label>
+        <label>Workplace photos or MP4 video<input ref={fileRef} type="file" multiple accept="image/jpeg,image/png,image/webp,video/mp4" onChange={pickFiles} /></label>
+        {files.length > 0 && <p className="empty">{files.length} source file(s). MP4 files generate a private JPEG evidence frame for AI analysis.</p>}
+        {errors.map((message) => <p className="form-error" key={message}>{message}</p>)}
+        <button className="primary-button" disabled={busy}>{busy ? "Creating…" : "Generate draft"}</button>
+      </form>
+    </main>
+  );
 }
 
 export function DraftReview({ draftId }: { draftId: string }) {
@@ -198,17 +229,19 @@ export function DraftReview({ draftId }: { draftId: string }) {
   const [publishing, setPublishing] = useState(false);
   const [published, setPublished] = useState<{ slug: string; version: number } | null>(null);
 
-  const refresh = () => setStored(localDraftStore.get(draftId));
   const commitMutation = async (mutate: () => Promise<StoredDraft>) => {
     if (!stored) return;
-    setError("");
     const previous = structuredClone(stored);
+    setError("");
     try {
       const next = await mutate();
       if (previous.organizationId !== "local") {
-        const identity = await requireTrainerIdentity();
         try {
-          await updateRemoteDraft(identity, next, { revision: previous.revision, contentHash: previous.contentHash });
+          await updateRemoteDraft(
+            await requireTrainerIdentity(),
+            next,
+            { revision: previous.revision, contentHash: previous.contentHash },
+          );
         } catch (remoteError) {
           localDraftStore.restore(previous);
           throw remoteError;
@@ -217,38 +250,27 @@ export function DraftReview({ draftId }: { draftId: string }) {
       setStored(next);
       setPublished(null);
     } catch (reason) {
-      refresh();
+      setStored(localDraftStore.get(draftId));
       setError(reason instanceof Error ? reason.message : "Draft update failed");
     }
   };
 
-  if (!stored) return <main className="shell"><h1>Draft not found</h1><p className="empty">Unknown draft {draftId} on this browser.</p><a href="/app/trainings">Back</a></main>;
+  if (!stored) {
+    return <main className="shell"><h1>Draft not found</h1><p className="empty">Unknown draft {draftId} on this browser.</p><a href="/app/trainings">Back</a></main>;
+  }
 
   const remote = stored.organizationId !== "local";
   const publishable = canPublishStored(stored);
-  const editStep = (stepId: string, patch: { instruction?: string; voiceText?: string }) => commitMutation(() =>
-    localDraftStore.edit(draftId, (draft) => ({ ...draft, reviewStatus: "AI_DRAFT", trainingSteps: draft.trainingSteps.map((step) => step.id === stepId ? { ...step, ...patch } : step }))),
-  );
-  const moveStep = (stepId: string, direction: -1 | 1) => commitMutation(() =>
-    localDraftStore.edit(draftId, (draft) => {
-      const ordered = [...draft.trainingSteps].sort((a, b) => a.order - b.order);
-      const index = ordered.findIndex((step) => step.id === stepId);
-      const destination = index + direction;
-      if (index < 0 || destination < 0 || destination >= ordered.length) return draft;
-      const moved = [...ordered];
-      const [item] = moved.splice(index, 1);
-      if (item) moved.splice(destination, 0, item);
-      return { ...draft, reviewStatus: "AI_DRAFT", trainingSteps: moved.map((step, i) => ({ ...step, order: i + 1 })) };
-    }),
-  );
-  const deleteStep = (stepId: string) => commitMutation(() =>
-    localDraftStore.edit(draftId, (draft) => ({ ...draft, reviewStatus: "AI_DRAFT", trainingSteps: draft.trainingSteps.filter((step) => step.id !== stepId) })),
-  );
+  const editStep = (stepId: string, patch: { instruction?: string; voiceText?: string }) =>
+    commitMutation(() => localDraftStore.edit(draftId, (draft) => ({
+      ...draft,
+      reviewStatus: "AI_DRAFT",
+      trainingSteps: draft.trainingSteps.map((step) => step.id === stepId ? { ...step, ...patch } : step),
+    })));
   const approve = () => commitMutation(async () => {
     const approver = remote ? (await requireTrainerIdentity()).userId : "local-trainer";
     return localDraftStore.approve(draftId, approver);
   });
-
   const publish = async () => {
     if (!remote || !publishable || publishing) return;
     setPublishing(true);
@@ -263,27 +285,30 @@ export function DraftReview({ draftId }: { draftId: string }) {
     }
   };
 
-  return <main className="shell">
-    <p className="eyebrow">Trainer / Draft review</p>
-    <h1>Review before publishing</h1>
-    <div className="demo-strip">{FIRE_FIXTURE_LABEL} / r{stored.revision} · {stored.status}</div>
-    <section className="panel performance">
-      <div className="panel-heading"><h2>Steps ({stored.draft.trainingSteps.length})</h2><span>{remote ? "Supabase-backed" : "local demo"}</span></div>
-      {stored.draft.trainingSteps.map((step) => <article key={step.id} style={{ borderTop: "1px solid var(--line)", padding: "12px 0" }}>
-        <p><strong>{step.id}</strong> · order {step.order}</p>
-        <label>Instruction<input key={`${step.id}-${stored.revision}-i`} defaultValue={step.instruction} onBlur={(e) => { if (e.target.value !== step.instruction) void editStep(step.id, { instruction: e.target.value }); }} /></label>
-        <label>Voice text<input key={`${step.id}-${stored.revision}-v`} defaultValue={step.voiceText} onBlur={(e) => { if (e.target.value !== step.voiceText) void editStep(step.id, { voiceText: e.target.value }); }} /></label>
-        <div style={{ display: "flex", gap: 8, marginTop: 8 }}><button className="text-button" onClick={() => void moveStep(step.id, -1)}>Move up</button><button className="text-button" onClick={() => void moveStep(step.id, 1)}>Move down</button><button className="text-button" onClick={() => void deleteStep(step.id)}>Delete</button></div>
-      </article>)}
-      {error && <p className="form-error">{error}</p>}
-      {!publishable && <p className="form-error">Any content edit invalidates approval. Approve this exact revision before publishing.</p>}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-        <button className="primary-button" onClick={() => void approve()}>{stored.status === "REVIEWED" ? "Approved" : "Approve exact revision"}</button>
-        <a href={`/app/trainings/${draftId}/1/preview`}>Preview projection</a>
-        {remote && <button className="primary-button" disabled={!publishable || publishing} onClick={() => void publish()}>{publishing ? "Publishing…" : "Publish immutable version"}</button>}
-      </div>
-      {published && <p><strong>Published:</strong> <a href={`/learn/${published.slug}/${published.version}`}>open worker training v{published.version}</a></p>}
-      {!remote && <p className="empty">Local demo drafts cannot be published. Sign in to Supabase for persistent authoring.</p>}
-    </section>
-  </main>;
+  return (
+    <main className="shell">
+      <p className="eyebrow">Trainer / Draft review</p>
+      <h1>Review before publishing</h1>
+      <div className="demo-strip">{FIRE_FIXTURE_LABEL} / r{stored.revision} · {stored.status}</div>
+      <section className="panel performance">
+        <div className="panel-heading"><h2>Steps ({stored.draft.trainingSteps.length})</h2><span>{remote ? "Supabase-backed" : "local demo"}</span></div>
+        {stored.draft.trainingSteps.map((step) => (
+          <article key={step.id} style={{ borderTop: "1px solid var(--line)", padding: "12px 0" }}>
+            <p><strong>{step.id}</strong> · order {step.order}</p>
+            <label>Instruction<input key={`${step.id}-${stored.revision}-instruction`} defaultValue={step.instruction} onBlur={(event) => { if (event.target.value !== step.instruction) void editStep(step.id, { instruction: event.target.value }); }} /></label>
+            <label>Voice text<input key={`${step.id}-${stored.revision}-voice`} defaultValue={step.voiceText} onBlur={(event) => { if (event.target.value !== step.voiceText) void editStep(step.id, { voiceText: event.target.value }); }} /></label>
+          </article>
+        ))}
+        {error && <p className="form-error">{error}</p>}
+        {!publishable && <p className="form-error">Any content edit invalidates approval. Approve this exact revision before publishing.</p>}
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <button className="primary-button" onClick={() => void approve()}>{stored.status === "REVIEWED" ? "Approved" : "Approve exact revision"}</button>
+          <a href={`/app/trainings/${draftId}/1/preview`}>Preview projection</a>
+          {remote && <button className="primary-button" disabled={!publishable || publishing} onClick={() => void publish()}>{publishing ? "Publishing…" : "Publish immutable version"}</button>}
+        </div>
+        {published && <p><strong>Published:</strong> <a href={`/learn/${published.slug}/${published.version}`}>open worker training v{published.version}</a></p>}
+        {!remote && <p className="empty">Local demo drafts cannot be published. Sign in to Supabase for persistent authoring.</p>}
+      </section>
+    </main>
+  );
 }
