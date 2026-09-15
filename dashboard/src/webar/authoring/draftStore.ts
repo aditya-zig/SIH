@@ -43,9 +43,6 @@ export class LocalDraftStore {
   private readonly storageKey = "surakshaar-drafts-v1";
 
   constructor() {
-    // Fixture-mode drafts must survive full-page navigations, so the store
-    // hydrates from localStorage when a browser is present. Node tests use
-    // the memory map only.
     try {
       const raw = window.localStorage.getItem(this.storageKey);
       if (raw) {
@@ -97,6 +94,16 @@ export class LocalDraftStore {
 
   list(): StoredDraft[] {
     return [...this.drafts.values()];
+  }
+
+  // Used by the live authoring adapter to roll back an optimistic local change
+  // when the matching Supabase revision/hash update loses a race or the network
+  // write fails. This prevents localStorage from drifting ahead of the server.
+  restore(snapshot: StoredDraft): StoredDraft {
+    const copy = structuredClone(snapshot);
+    this.drafts.set(copy.draftId, copy);
+    this.persist();
+    return copy;
   }
 
   async edit(
@@ -165,5 +172,4 @@ export class LocalDraftStore {
   }
 }
 
-// One shared in-memory store for the fixture-mode authoring flow.
 export const localDraftStore = new LocalDraftStore();
