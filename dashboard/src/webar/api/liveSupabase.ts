@@ -8,6 +8,8 @@ import { assertValidTrainingPackage } from "../schema/validateTrainingPackage.js
 export type LiveSupabaseSession = {
   client: SupabaseClient;
   userId: string;
+  supabaseUrl: string;
+  accessToken: string;
 };
 
 export type TrainerIdentity = LiveSupabaseSession & {
@@ -41,7 +43,12 @@ export async function getLiveSupabaseSession(): Promise<LiveSupabaseSession | nu
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     global: { headers: { authorization: `Bearer ${context.accessToken}` } },
   });
-  return { client, userId: context.workerId };
+  return {
+    client,
+    userId: context.workerId,
+    supabaseUrl: context.supabaseUrl,
+    accessToken: context.accessToken,
+  };
 }
 
 export async function requireTrainerIdentity(): Promise<TrainerIdentity> {
@@ -56,11 +63,7 @@ export async function requireTrainerIdentity(): Promise<TrainerIdentity> {
   const role = data.role as string;
   if (role !== "trainer" && role !== "admin") throw new Error("Trainer role required");
   if (!data.organization_id) throw new Error("Trainer organization unavailable");
-  return {
-    ...session,
-    role,
-    organizationId: data.organization_id as string,
-  };
+  return { ...session, role, organizationId: data.organization_id as string };
 }
 
 export function buildRemoteDraftProjection(stored: StoredDraft) {
@@ -136,7 +139,7 @@ export async function publishRemoteDraft(
 function parseScenario(value: unknown): Scenario {
   if (!value || typeof value !== "object") throw new Error("Published scenario is missing");
   const s = value as Partial<Scenario>;
-  if (typeof s.id !== "string" || !Number.isInteger(s.version) || !Number.isFinite(s.passScore) || !Array.isArray(s.steps)) {
+  if (typeof s.id !== "string" || !Number.isInteger(s.version) || typeof s.passScore !== "number" || !Array.isArray(s.steps)) {
     throw new Error("Published scenario is invalid");
   }
   return value as Scenario;
@@ -144,11 +147,7 @@ function parseScenario(value: unknown): Scenario {
 
 export function parsePublishedTrainingRow(row: unknown, expectedVersion: number): PublishedTrainingBundle {
   if (!row || typeof row !== "object") throw new Error("Published training not found");
-  const r = row as {
-    id?: unknown;
-    slug?: unknown;
-    module_versions?: unknown;
-  };
+  const r = row as { id?: unknown; slug?: unknown; module_versions?: unknown };
   const versions = Array.isArray(r.module_versions) ? r.module_versions : [r.module_versions];
   const versionRow = versions.find(
     (item) => item && typeof item === "object" && Number((item as { version?: unknown }).version) === expectedVersion,
@@ -167,10 +166,7 @@ export function parsePublishedTrainingRow(row: unknown, expectedVersion: number)
   };
 }
 
-export async function loadPublishedTraining(
-  moduleSlug: string,
-  version: number,
-): Promise<PublishedTrainingBundle> {
+export async function loadPublishedTraining(moduleSlug: string, version: number): Promise<PublishedTrainingBundle> {
   const session = await getLiveSupabaseSession();
   if (!session) throw new Error("Sign in once before downloading this training");
   const { data, error } = await session.client
