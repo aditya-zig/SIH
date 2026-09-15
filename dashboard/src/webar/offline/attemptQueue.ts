@@ -1,14 +1,17 @@
-// Offline contract — exact state machine from ACTIVE MECHANICAL EXECUTION SPEC.
+// Offline contract — exact state machine from the execution spec.
 // IndexedDB database: surakshaar-webar, version 1.
 // Stores: packages [packageId, version], progress [workerId, packageId, version],
 // attempts attemptId, syncQueue attemptId {PENDING|SYNCING|CONFIRMED|CONFLICT|BLOCKED}.
-// Donor: WebSurAR src/attemptQueue.js (DB surakshaar-offline, single store) was
-// minimal; this implements the full spec while keeping queueAttempt/listPending
-// behavior compatible. No rewrite from scratch: same put/getAll shape extended.
+// E04: real IndexedDB only. Tests run against fake-indexeddb, a
+// standards-compatible implementation. There is no memory fallback: without
+// IndexedDB the queue throws an honest error instead of pretending to persist.
+// Worker identity is part of progress/attempt/queue keys so two workers sharing
+// one device can never resume each other, and v1 progress never leaks into v2.
 export type SyncState = "PENDING" | "SYNCING" | "CONFIRMED" | "CONFLICT" | "BLOCKED";
 
 export type QueueEntry = {
   attemptId: string;
+  workerId: string;
   state: SyncState;
   retryCount: number;
   nextRetryAt: number;
@@ -17,15 +20,37 @@ export type QueueEntry = {
   serverResult?: unknown;
 };
 
+export type AttemptEvent = {
+  sequence: number;
+  stepId: string;
+  kind: string;
+  targetId: string;
+};
+
 export type AttemptPayload = {
   attemptId: string;
+  workerId: string;
   deviceId: string;
   moduleId: string;
   moduleVersion: number;
   startedAt: string;
   completedAt: string;
   clientScore: number;
-  events: Array<{ sequence: number; stepId: string; kind: string; targetId: string }>;
+  events: AttemptEvent[];
+};
+
+export type AttemptProgress = {
+  key: string;
+  workerId: string;
+  packageId: string;
+  version: number;
+  attemptId: string;
+  stepIndex: number;
+  events: AttemptEvent[];
+  startedAt: string;
+  updatedAt: string;
+  completed: boolean;
+  clientScore: number;
 };
 
 export const DB_NAME = "surakshaar-webar";
@@ -45,32 +70,28 @@ export function nextStateForHttp(status: number): SyncState | "RETRY" {
   return "RETRY"; // network / 429 / 5xx
 }
 
-function compoundKey(parts: Array<string | number>): string {
-  return parts.map((p) => String(p)).join("::");
+export function progressKey(workerId: string, packageId: string, version: number): string {
+  return [workerId, packageId, version].map((p) => String(p)).join("::");
 }
 
-type MemoryStores = {
-  packages: Map<string, unknown>;
-  progress: Map<string, unknown>;
-  attempts: Map<string, unknown>;
-  syncQueue: Map<string, QueueEntry>;
-};
-
-// In-memory fallback for tests / non-browser environments. Browser path uses IndexedDB.
-const memory: MemoryStores = {
-  packages: new Map(),
-  progress: new Map(),
-  attempts: new Map(),
-  syncQueue: new Map(),
-};
-
-function isBrowser(): boolean {
-  return typeof indexedDB !== "undefined";
+function packageKey(packageId: string, version: number): string {
+  return [packageId, version].map((p) => String(p)).join("::");
 }
 
-function openDb(): Promise<IDBDatabase> {
+function requireIndexedDB(): IDBFactory {
+  const factory =
+    typeof indexedDB !== "undefined"
+      ? indexedDB
+      : (globalThis as { indexedDB?: IDBFactory }).indexedDB;
+  if (!factory) {
+    throw new Error("IndexedDB is unavailable; offline persistence cannot run without it");
+  }
+  return factory;
+}
+
+function openDb(factory: IDBFactory = requireIndexedDB()): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    const request = factory.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains("packages"))
@@ -83,41 +104,62 @@ function openDb(): Promise<IDBDatabase> {
         db.createObjectStore("syncQueue", { keyPath: "attemptId" });
     };
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => reject(request.error ?? new Error("IndexedDB open failed"));
   });
 }
 
 async function idbPut(store: string, value: unknown): Promise<void> {
   const db = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(store, "readwrite");
-    tx.objectStore(store).put(value);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-  db.close();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(store, "readwrite");
+      tx.objectStore(store).put(value as never);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error(`put to ${store} failed`));
+    });
+  } finally {
+    db.close();
+  }
 }
 
 async function idbGetAll<T>(store: string): Promise<T[]> {
   const db = await openDb();
-  const out = await new Promise<T[]>((resolve, reject) => {
-    const req = db.transaction(store).objectStore(store).getAll();
-    req.onsuccess = () => resolve(req.result as T[]);
-    req.onerror = () => reject(req.error);
-  });
-  db.close();
-  return out;
+  try {
+    return await new Promise<T[]>((resolve, reject) => {
+      const req = db.transaction(store).objectStore(store).getAll();
+      req.onsuccess = () => resolve(req.result as T[]);
+      req.onerror = () => reject(req.error ?? new Error(`read of ${store} failed`));
+    });
+  } finally {
+    db.close();
+  }
 }
 
 async function idbGet<T>(store: string, key: string): Promise<T | undefined> {
   const db = await openDb();
-  const out = await new Promise<T | undefined>((resolve, reject) => {
-    const req = db.transaction(store).objectStore(store).get(key);
-    req.onsuccess = () => resolve(req.result as T | undefined);
-    req.onerror = () => reject(req.error);
-  });
-  db.close();
-  return out;
+  try {
+    return await new Promise<T | undefined>((resolve, reject) => {
+      const req = db.transaction(store).objectStore(store).get(key);
+      req.onsuccess = () => resolve(req.result as T | undefined);
+      req.onerror = () => reject(req.error ?? new Error(`read of ${store} failed`));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function idbDelete(store: string, key: string): Promise<void> {
+  const db = await openDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(store, "readwrite");
+      tx.objectStore(store).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error(`delete from ${store} failed`));
+    });
+  } finally {
+    db.close();
+  }
 }
 
 export async function sha256HexBrowser(canonical: string): Promise<string> {
@@ -150,48 +192,96 @@ export async function storeCompletePackage(
   pkg: unknown,
   assetManifest: string[],
 ): Promise<void> {
-  const key = compoundKey([packageId, version]);
-  const record = { key, packageId, version, package: pkg, assetManifest, downloadState: "COMPLETE" as const, downloadedAt: new Date().toISOString() };
-  if (!isBrowser()) {
-    memory.packages.set(key, record);
-    return;
-  }
+  const key = packageKey(packageId, version);
+  const record = {
+    key,
+    packageId,
+    version,
+    package: pkg,
+    assetManifest,
+    downloadState: "COMPLETE" as const,
+    downloadedAt: new Date().toISOString(),
+  };
   await idbPut("packages", record);
 }
 
 export async function getPackage(packageId: string, version: number): Promise<unknown | undefined> {
-  const key = compoundKey([packageId, version]);
-  if (!isBrowser()) return memory.packages.get(key);
-  const rec = await idbGet<{ package: unknown; downloadState: string }>("packages", key);
+  const rec = await idbGet<{ package: unknown; downloadState: string }>(
+    "packages",
+    packageKey(packageId, version),
+  );
   if (!rec || rec.downloadState !== "COMPLETE") return undefined;
   return rec.package;
 }
 
-// Atomic completion transaction: write attempts + syncQueue PENDING in the same
-// transaction before showing SAVED ON THIS PHONE.
+// Active attempt progress, scoped to worker + package + version. Restored after
+// reload so a worker resumes exactly their own attempt, never another's.
+export async function saveProgress(progress: Omit<AttemptProgress, "key" | "updatedAt">): Promise<AttemptProgress> {
+  const record: AttemptProgress = {
+    ...progress,
+    key: progressKey(progress.workerId, progress.packageId, progress.version),
+    updatedAt: new Date().toISOString(),
+  };
+  await idbPut("progress", record);
+  return record;
+}
+
+export async function loadProgress(
+  workerId: string,
+  packageId: string,
+  version: number,
+): Promise<AttemptProgress | undefined> {
+  const rec = await idbGet<AttemptProgress>("progress", progressKey(workerId, packageId, version));
+  if (!rec || rec.workerId !== workerId) return undefined;
+  return rec;
+}
+
+export async function clearProgress(workerId: string, packageId: string, version: number): Promise<void> {
+  await idbDelete("progress", progressKey(workerId, packageId, version));
+}
+
+// Atomic completion transaction: attempts + syncQueue PENDING (+ completed
+// progress flag) commit together before showing SAVED ON THIS PHONE.
 export async function completeAttemptAtomically(payload: AttemptPayload): Promise<QueueEntry> {
+  if (!payload.workerId) throw new Error("workerId is required to complete an attempt");
   const entry: QueueEntry = {
     attemptId: payload.attemptId,
+    workerId: payload.workerId,
     state: "PENDING",
     retryCount: 0,
     nextRetryAt: Date.now(),
     payloadHash: payloadHash(payload),
   };
-  if (!isBrowser()) {
-    memory.attempts.set(payload.attemptId, { ...payload, payloadHash: entry.payloadHash });
-    memory.syncQueue.set(payload.attemptId, entry);
-    return entry;
-  }
   const db = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(["attempts", "syncQueue"], "readwrite");
-    tx.objectStore("attempts").put({ ...payload, payloadHash: entry.payloadHash });
-    tx.objectStore("syncQueue").put(entry);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-  db.close();
-  return entry;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(["attempts", "syncQueue", "progress"], "readwrite");
+      tx.objectStore("attempts").put({ ...payload, payloadHash: entry.payloadHash });
+      const existing = tx.objectStore("syncQueue").get(payload.attemptId);
+      existing.onsuccess = () => {
+        // Never reset an existing queue entry: reloads and double taps must
+        // not wipe retry state or resurrect terminal entries.
+        if (!existing.result) tx.objectStore("syncQueue").put(entry);
+      };
+      const progressKeyValue = progressKey(payload.workerId, payload.moduleId, payload.moduleVersion);
+      const progress = tx.objectStore("progress").get(progressKeyValue);
+      progress.onsuccess = () => {
+        if (progress.result) {
+          tx.objectStore("progress").put({ ...progress.result, completed: true, updatedAt: new Date().toISOString() });
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error("completion transaction failed"));
+    });
+  } finally {
+    db.close();
+  }
+  const stored = await idbGet<QueueEntry>("syncQueue", payload.attemptId);
+  return stored ?? entry;
+}
+
+export async function getAttempt(attemptId: string): Promise<AttemptPayload | undefined> {
+  return idbGet<AttemptPayload>("attempts", attemptId);
 }
 
 /** Legacy donor-compatible helper: queue attempt as LOCAL_DURABLE. */
@@ -199,36 +289,38 @@ export async function queueAttempt(attempt: AttemptPayload): Promise<void> {
   await completeAttemptAtomically(attempt);
 }
 
-/** Legacy donor-compatible helper: list all queued attempts. */
-export async function listPendingAttempts(): Promise<QueueEntry[]> {
-  if (!isBrowser()) return [...memory.syncQueue.values()].filter((e) => e.state === "PENDING" || e.state === "SYNCING");
+/** Pending attempts for one worker; SYNCING entries are included so a reload
+ *  can recover them, and the caller re-marks them PENDING via recoverOnReload. */
+export async function listPendingAttempts(workerId?: string): Promise<QueueEntry[]> {
   const all = await idbGetAll<QueueEntry>("syncQueue");
-  return all.filter((e) => e.state === "PENDING" || e.state === "SYNCING");
+  return all.filter(
+    (e) =>
+      (e.state === "PENDING" || e.state === "SYNCING") &&
+      (workerId === undefined || e.workerId === workerId),
+  );
 }
 
-export async function listQueue(): Promise<QueueEntry[]> {
-  if (!isBrowser()) return [...memory.syncQueue.values()];
-  return idbGetAll<QueueEntry>("syncQueue");
+export async function listQueue(workerId?: string): Promise<QueueEntry[]> {
+  const all = await idbGetAll<QueueEntry>("syncQueue");
+  return workerId === undefined ? all : all.filter((e) => e.workerId === workerId);
 }
 
 export async function markSyncing(attemptId: string): Promise<void> {
-  if (!isBrowser()) {
-    const e = memory.syncQueue.get(attemptId);
-    if (e) memory.syncQueue.set(attemptId, { ...e, state: "SYNCING" });
-    return;
-  }
   const db = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction("syncQueue", "readwrite");
-    const store = tx.objectStore("syncQueue");
-    const req = store.get(attemptId);
-    req.onsuccess = () => {
-      if (req.result) store.put({ ...req.result, state: "SYNCING" });
-    };
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-  db.close();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("syncQueue", "readwrite");
+      const store = tx.objectStore("syncQueue");
+      const req = store.get(attemptId);
+      req.onsuccess = () => {
+        if (req.result) store.put({ ...req.result, state: "SYNCING" });
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error("markSyncing failed"));
+    });
+  } finally {
+    db.close();
+  }
 }
 
 export async function applySyncResult(
@@ -253,30 +345,26 @@ export async function applySyncResult(
       lastError: errorMessage,
     };
   };
-  if (!isBrowser()) {
-    const prev = memory.syncQueue.get(attemptId);
-    if (!prev) return undefined;
-    const next = update(prev);
-    memory.syncQueue.set(attemptId, next);
-    return next;
-  }
   const db = await openDb();
-  let next: QueueEntry | undefined;
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction("syncQueue", "readwrite");
-    const store = tx.objectStore("syncQueue");
-    const req = store.get(attemptId);
-    req.onsuccess = () => {
-      if (req.result) {
-        next = update(req.result as QueueEntry);
-        store.put(next);
-      }
-    };
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-  db.close();
-  return next;
+  try {
+    let next: QueueEntry | undefined;
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("syncQueue", "readwrite");
+      const store = tx.objectStore("syncQueue");
+      const req = store.get(attemptId);
+      req.onsuccess = () => {
+        if (req.result) {
+          next = update(req.result as QueueEntry);
+          store.put(next);
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error("applySyncResult failed"));
+    });
+    return next;
+  } finally {
+    db.close();
+  }
 }
 
 /** Page reload must recover PENDING/SYNCING as PENDING. */
@@ -284,9 +372,19 @@ export function recoverOnReload(entries: QueueEntry[]): QueueEntry[] {
   return entries.map((e) => (e.state === "SYNCING" ? { ...e, state: "PENDING" as const } : e));
 }
 
-export function __resetMemoryForTests(): void {
-  memory.packages.clear();
-  memory.progress.clear();
-  memory.attempts.clear();
-  memory.syncQueue.clear();
+/** Test-only: wipe all four stores in the fake-indexeddb database. */
+export async function __clearAllForTests(): Promise<void> {
+  const db = await openDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(["packages", "progress", "attempts", "syncQueue"], "readwrite");
+      for (const store of ["packages", "progress", "attempts", "syncQueue"] as const) {
+        tx.objectStore(store).clear();
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error("test clear failed"));
+    });
+  } finally {
+    db.close();
+  }
 }

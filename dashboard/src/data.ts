@@ -26,6 +26,20 @@ export async function signOut(): Promise<void> {
   await supabase?.auth.signOut();
 }
 
+// Sync context for the offline queue scheduler: the worker identity is the
+// authenticated user, never a client-typed id. Null when signed out or when
+// no backend is configured, in which case the scheduler skips draining.
+export async function getSyncContext(): Promise<
+  { supabaseUrl: string; accessToken: string; workerId: string } | null
+> {
+  if (!supabase || !url) return null;
+  const { data } = await supabase.auth.getSession();
+  const accessToken = data.session?.access_token;
+  const workerId = data.session?.user.id;
+  if (!accessToken || !workerId) return null;
+  return { supabaseUrl: url, accessToken, workerId };
+}
+
 export const demoDashboard: DashboardData = {
   isDemo: true,
   workersTrained: 128,

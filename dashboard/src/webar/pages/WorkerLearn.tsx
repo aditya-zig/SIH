@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { getSyncContext } from "../../data.js";
 import {
   FIRE_FIXTURE_LABEL,
   fireFixturePackage,
@@ -6,8 +7,11 @@ import {
 } from "../templates/fire.fixture.js";
 import { evaluateAttempt } from "../evaluation/evaluateAttempt.js";
 import {
+  clearProgress,
   completeAttemptAtomically,
   getPackage,
+  loadProgress,
+  saveProgress,
   storeCompletePackage,
 } from "../offline/attemptQueue.js";
 import {
@@ -26,6 +30,27 @@ type RunMode = "preview" | "ar";
 
 type AttemptEvent = { sequence: number; stepId: string; kind: string; targetId: string };
 
+// Worker identity is the authenticated user when signed in, otherwise a
+// stable per-browser demo id. Either way it scopes progress/attempts/queue so
+// two workers on one device never share state. Demo ids are never synced as
+// worker identities: server sync resolves identity from auth server-side.
+export async function resolveWorkerId(): Promise<{ workerId: string; demo: boolean }> {
+  const context = await getSyncContext().catch(() => null);
+  if (context) return { workerId: context.workerId, demo: false };
+  const KEY = "surakshaar-demo-worker-id";
+  let id: string | null = null;
+  try {
+    id = window.localStorage.getItem(KEY);
+    if (!id) {
+      id = `demo-${crypto.randomUUID()}`;
+      window.localStorage.setItem(KEY, id);
+    }
+  } catch {
+    id = `demo-ephemeral-${Date.now()}`;
+  }
+  return { workerId: id ?? `demo-ephemeral-${Date.now()}`, demo: true };
+}
+
 export default function WorkerLearn({ packageId, version }: { packageId: string; version: number }) {
   const [phase, setPhase] = useState<Phase>("brief");
   const [runMode, setRunMode] = useState<RunMode | null>(null);
@@ -40,11 +65,15 @@ export default function WorkerLearn({ packageId, version }: { packageId: string;
   const sceneRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef<MountedScene | null>(null);
   const trackerRef = useRef<ARPlacementTracker | null>(null);
+  const attemptRef = useRef<{ attemptId: string; startedAt: string; workerId: string } | null>(null);
+  const [workerId, setWorkerId] = useState<string | null>(null);
+  const [resumed, setResumed] = useState(false);
   const pkg = fireFixturePackage;
   const isFixture = packageId === pkg.packageId && version === pkg.version;
 
   useEffect(() => {
     isImmersiveArSupported().then(setArSupported);
+    resolveWorkerId().then(({ workerId: id }) => setWorkerId(id)).catch(() => undefined);
   }, []);
 
   const steps = pkg.trainingSteps;
@@ -52,31 +81,55 @@ export default function WorkerLearn({ packageId, version }: { packageId: string;
 
   // Evaluator is the only progression authority: an entity interaction builds
   // one sequenced event for the current step; accepted advances, penalized
-  // shows remediation, rejected changes nothing.
+  // shows remediation, rejected changes nothing. Every step persists progress
+  // scoped to this worker + package version for reload recovery.
   const interact = (kind: string, targetId: string) => {
     const step = steps[stepIndex];
-    if (!step || phase !== "running" || !placed) return;
+    const attempt = attemptRef.current;
+    if (!step || phase !== "running" || !placed || !attempt) return;
     const next = [...events, { sequence: events.length + 1, stepId: step.id, kind, targetId }];
     setEvents(next);
+    const advanced = tryAdvance(step.id, next);
+    void saveProgress({
+      workerId: attempt.workerId,
+      packageId: pkg.packageId,
+      version: pkg.version,
+      attemptId: attempt.attemptId,
+      stepIndex: advanced,
+      events: next,
+      startedAt: attempt.startedAt,
+      completed: false,
+      clientScore: 0,
+    }).catch(() => undefined);
+  };
+
+  // Pure evaluator fold reused by interact; returns the next step index.
+  const tryAdvance = (stepId: string, next: AttemptEvent[]): number => {
     try {
       const res = evaluateAttempt(fireFixtureScenario as never, next as never);
       const last = res.events[res.events.length - 1];
+      const step = steps.find((s) => s.id === stepId);
       if (last?.outcome === "accepted") {
-        setFeedback(step.successFeedback);
-        speakInstruction(steps[stepIndex + 1]?.voiceText ?? "Training complete.");
-        if (stepIndex + 1 >= steps.length) {
+        setFeedback(step?.successFeedback ?? "Correct.");
+        const idx = steps.findIndex((s) => s.id === stepId);
+        speakInstruction(steps[idx + 1]?.voiceText ?? "Training complete.");
+        if (idx + 1 >= steps.length) {
           setRuntimeStatus("COMPLETE");
           setPhase("assessment");
-        } else {
-          setStepIndex(stepIndex + 1);
+          return idx + 1;
         }
-      } else if (last?.outcome === "penalized") {
-        setFeedback(`${step.failureFeedback} ${step.remediation ?? ""} (score ${res.score})`);
-      } else {
-        setFeedback("Not recognized for this step — no score change. Try the highlighted object.");
+        setStepIndex(idx + 1);
+        return idx + 1;
       }
+      if (last?.outcome === "penalized") {
+        setFeedback(`${step?.failureFeedback ?? "Wrong choice."} ${step?.remediation ?? ""} (score ${res.score})`);
+        return steps.findIndex((s) => s.id === stepId);
+      }
+      setFeedback("Not recognized for this step — no score change. Try the highlighted object.");
+      return steps.findIndex((s) => s.id === stepId);
     } catch (e) {
       setFeedback(e instanceof Error ? e.message : "Invalid event stream");
+      return steps.findIndex((s) => s.id === stepId);
     }
   };
   // Entity listeners mount once; always call the latest step/events via ref.
@@ -149,7 +202,26 @@ export default function WorkerLearn({ packageId, version }: { packageId: string;
     setPhase("ready");
   };
 
-  const startRun = (mode: RunMode) => {
+  const startRun = async (mode: RunMode) => {
+    const id = workerId ?? (await resolveWorkerId().catch(() => null))?.workerId;
+    if (!id) {
+      setFeedback("Worker identity unavailable — reload and try again.");
+      return;
+    }
+    setWorkerId(id);
+    // Resume this worker's own incomplete progress, never another worker's.
+    const saved = await loadProgress(id, pkg.packageId, pkg.version).catch(() => undefined);
+    if (saved && !saved.completed && saved.events.length > 0) {
+      attemptRef.current = { attemptId: saved.attemptId, startedAt: saved.startedAt, workerId: id };
+      setEvents(saved.events);
+      setStepIndex(Math.min(saved.stepIndex, steps.length - 1));
+      setResumed(true);
+    } else {
+      attemptRef.current = { attemptId: crypto.randomUUID(), startedAt: new Date().toISOString(), workerId: id };
+      setEvents([]);
+      setStepIndex(0);
+      setResumed(false);
+    }
     setRunMode(mode);
     setPlaced(false);
     setRuntimeStatus("UNMOUNTED");
@@ -165,6 +237,11 @@ export default function WorkerLearn({ packageId, version }: { packageId: string;
 
   const finish = async (correct: boolean) => {
     const finalEvents = events;
+    const attempt = attemptRef.current;
+    if (!attempt) {
+      setFeedback("Attempt identity missing — restart the run.");
+      return;
+    }
     let provisional = 0;
     let critical = false;
     try {
@@ -176,19 +253,27 @@ export default function WorkerLearn({ packageId, version }: { packageId: string;
       provisional = 0;
     }
     const payload = {
-      attemptId: crypto.randomUUID(),
+      attemptId: attempt.attemptId,
+      workerId: attempt.workerId,
       deviceId: "browser-fixture",
       moduleId: pkg.packageId,
       moduleVersion: pkg.version,
-      startedAt: new Date(Date.now() - finalEvents.length * 10000).toISOString(),
+      startedAt: attempt.startedAt,
       completedAt: new Date().toISOString(),
       clientScore: provisional,
       events: finalEvents,
     };
     await completeAttemptAtomically(payload);
+    await clearProgress(attempt.workerId, pkg.packageId, pkg.version).catch(() => undefined);
     setScore(provisional);
     setSaveState("SAVED ON THIS PHONE");
     setPhase("result");
+    // Opportunistic drain: scheduler also fires on online/focus/startup.
+    const context = await getSyncContext().catch(() => null);
+    if (context) {
+      const { drainSyncQueue } = await import("../api/syncAttempt.js");
+      await drainSyncQueue(context).catch(() => null);
+    }
   };
 
   return (
@@ -234,6 +319,7 @@ export default function WorkerLearn({ packageId, version }: { packageId: string;
           {runMode === "ar" && !placed && runtimeStatus === "XR_ENTERING" && <p>Entering immersive AR…</p>}
           {placed && <p>{current?.instruction}</p>}
           {placed && <p className="empty">Click the 3D object for this step. Wrong objects follow penalty rules.</p>}
+          {resumed && placed && <p className="empty">Resumed your saved progress for this training version.</p>}
           {feedback && <p>{feedback}</p>}
           <p className="empty">Events recorded: {events.length}</p>
         </section>

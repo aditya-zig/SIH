@@ -1,14 +1,28 @@
-/* SurakshaAR WebAR service worker — Cache API for app/package/assets.
-   Donor: WebSurAR public/sw.js (CACHE surakshaar-v1, SHELL ['/', '/manifest.webmanifest']).
-   Kept as the more complete donor base, extended with versioned cache name,
-   package/asset pass-through, and explicit offline fallback. IndexedDB attempt
-   queue lives in dashboard/src/webar/offline/attemptQueue.ts, not here. */
-const CACHE = "surakshaar-webar-v1";
-const SHELL = ["/", "/manifest.webmanifest"];
+/* SurakshaAR WebAR service worker.
+   Caches: application shell, local runtime chunks, static assets, and
+   versioned downloaded package resources requested by the app.
+   Never caches: authenticated API traffic (Supabase REST/RPC/functions),
+   non-GET requests, or cross-origin responses. No tokens or secrets live here.
+   IndexedDB attempt state lives in dashboard/src/webar/offline/attemptQueue.ts. */
+const CACHE = "surakshaar-webar-v2";
+const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/favicon.svg"];
+
+function isApiRequest(request) {
+  if (request.method !== "GET") return true;
+  const url = new URL(request.url);
+  if (url.pathname.startsWith("/functions/v1")) return true;
+  if (url.pathname.startsWith("/rest/v1")) return true;
+  if (url.pathname.startsWith("/auth/v1")) return true;
+  if (request.headers.has("authorization")) return true;
+  return false;
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()),
+    caches
+      .open(CACHE)
+      .then((cache) => cache.addAll(SHELL))
+      .then(() => self.skipWaiting()),
   );
 });
 
@@ -22,14 +36,31 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") return;
+  const { request } = event;
+  if (isApiRequest(request)) return;
+  const url = new URL(request.url);
+  if (request.mode === "navigate") {
+    // Shell-first for SPA routes with an offline fallback to the shell.
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE).then((cache) => cache.put(request, copy));
+          return response;
+        })
+        .catch(() => caches.match("/index.html")),
+    );
+    return;
+  }
   event.respondWith(
-    caches.match(event.request).then(
+    caches.match(request).then(
       (hit) =>
         hit ||
-        fetch(event.request).then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+        fetch(request).then((response) => {
+          if (response.ok && url.origin === self.location.origin) {
+            const copy = response.clone();
+            caches.open(CACHE).then((cache) => cache.put(request, copy));
+          }
           return response;
         }),
     ),

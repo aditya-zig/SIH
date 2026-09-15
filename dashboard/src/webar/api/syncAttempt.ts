@@ -1,9 +1,15 @@
 // Worker sync v2 client — maps IndexedDB queue entries to the exact server
 // contract: {attemptId, deviceId, moduleId, moduleVersion, startedAt, completedAt,
 // clientScore, events[{sequence, stepId, kind, targetId}]}.
-// Server resolves workerId = auth.uid(); workerId is never trusted from request.
-import type { AttemptPayload } from "../offline/attemptQueue.js";
-import { applySyncResult, listQueue, markSyncing } from "../offline/attemptQueue.js";
+// Server resolves workerId = auth.uid(); workerId is local bookkeeping only and
+// is never sent: the v2 endpoint rejects payloads that carry one.
+import {
+  applySyncResult,
+  getAttempt,
+  listQueue,
+  markSyncing,
+  type AttemptPayload,
+} from "../offline/attemptQueue.js";
 
 export type SyncV2Result = {
   attemptId: string;
@@ -21,41 +27,131 @@ export async function syncOneAttempt(
   payload: AttemptPayload,
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ status: number; body: unknown }> {
+  const { workerId: _localOnly, ...serverPayload } = payload;
+  void _localOnly;
   const response = await fetchImpl(`${supabaseUrl}/functions/v1/sync-attempt`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(serverPayload),
   });
   const body = (await response.json().catch(() => ({}))) as unknown;
   return { status: response.status, body };
 }
 
-/** Drain PENDING queue with bounded backoff. Returns confirmed count. */
+export type SyncContext = {
+  supabaseUrl: string;
+  accessToken: string;
+  workerId: string;
+};
+
+export type DrainResult = {
+  attempted: number;
+  confirmed: number;
+  conflicts: number;
+  blocked: number;
+  pending: number;
+};
+
+/** Drain due PENDING entries for one worker. Terminal CONFLICT/BLOCKED/
+ *  CONFIRMED entries are never retried. Entries whose retry time has not
+ *  arrived are left alone so reloads cannot reset the backoff schedule. */
 export async function drainSyncQueue(
-  supabaseUrl: string,
-  accessToken: string,
+  context: SyncContext,
   fetchImpl: typeof fetch = fetch,
-): Promise<{ attempted: number; confirmed: number }> {
-  const queue = await listQueue();
+): Promise<DrainResult> {
+  const result: DrainResult = { attempted: 0, confirmed: 0, conflicts: 0, blocked: 0, pending: 0 };
   const now = Date.now();
-  let attempted = 0;
-  let confirmed = 0;
-  // Queue entries store only bookkeeping; attempt payloads live in attempts store.
-  // For P0 fixture flow the caller passes payloads via syncOneAttempt directly;
-  // this drain handles state transitions for entries whose payload is supplied
-  // by the caller through a payload lookup injected here.
-  void now;
-  void attempted;
-  void confirmed;
-  void markSyncing;
-  void applySyncResult;
-  void syncOneAttempt;
-  void supabaseUrl;
-  void accessToken;
-  void fetchImpl;
-  void queue;
-  return { attempted, confirmed };
+  const entries = await listQueue(context.workerId);
+  for (const entry of entries) {
+    if (entry.state !== "PENDING") continue;
+    if (entry.nextRetryAt > now) {
+      result.pending += 1;
+      continue;
+    }
+    const payload = await getAttempt(entry.attemptId);
+    if (!payload || payload.workerId !== context.workerId) {
+      result.pending += 1;
+      continue;
+    }
+    result.attempted += 1;
+    await markSyncing(entry.attemptId);
+    let status = 0;
+    let errorMessage: string | undefined;
+    try {
+      const response = await syncOneAttempt(context.supabaseUrl, context.accessToken, payload, fetchImpl);
+      status = response.status;
+      if (status !== 200) {
+        errorMessage = (response.body as { error?: string } | null)?.error ?? `sync failed (${status})`;
+      }
+    } catch (e) {
+      // Network failure: no HTTP status, keep PENDING with backoff.
+      errorMessage = e instanceof Error ? e.message : "network failure";
+    }
+    const next = await applySyncResult(entry.attemptId, status, undefined, errorMessage);
+    if (next?.state === "CONFIRMED") result.confirmed += 1;
+    else if (next?.state === "CONFLICT") result.conflicts += 1;
+    else if (next?.state === "BLOCKED") result.blocked += 1;
+    else result.pending += 1;
+  }
+  return result;
+}
+
+export type SyncScheduler = {
+  stop: () => void;
+  drainNow: () => Promise<DrainResult | null>;
+};
+
+/** Queue drain scheduler: runs on startup, browser online, window focus, and
+ *  visibility resume. Requires no manual sync press. A null context (signed
+ *  out / backend unconfigured) skips the drain but keeps listeners armed. */
+export function startSyncScheduler(
+  getContext: () => Promise<SyncContext | null>,
+  fetchImpl: typeof fetch = fetch,
+): SyncScheduler {
+  let stopped = false;
+  let draining = false;
+
+  const drainNow = async (): Promise<DrainResult | null> => {
+    if (stopped || draining) return null;
+    draining = true;
+    try {
+      const context = await getContext();
+      if (!context) return null;
+      return await drainSyncQueue(context, fetchImpl);
+    } catch {
+      return null;
+    } finally {
+      draining = false;
+    }
+  };
+
+  const onTrigger = () => {
+    void drainNow();
+  };
+  const onVisibility = () => {
+    if (typeof document !== "undefined" && document.visibilityState === "visible") onTrigger();
+  };
+
+  if (typeof window !== "undefined") {
+    window.addEventListener("online", onTrigger);
+    window.addEventListener("focus", onTrigger);
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility);
+  }
+  // Initial startup drain.
+  void drainNow();
+
+  return {
+    stop: () => {
+      stopped = true;
+      if (typeof window !== "undefined") {
+        window.removeEventListener("online", onTrigger);
+        window.removeEventListener("focus", onTrigger);
+        if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibility);
+      }
+    },
+    drainNow,
+  };
 }
