@@ -10,6 +10,10 @@ export type GenerateDraftRequest = {
   media: Array<{ storagePath: string; mimeType: string; frameTimeMs?: number }>;
   trainerInstructions: string;
   locale: string;
+  // Pinned at request start; the server answers 409 when the draft moved on,
+  // so a late result can never overwrite newer trainer edits.
+  expectedRevision?: number;
+  expectedHash?: string;
 };
 
 export type GenerateDraftSuccess = {

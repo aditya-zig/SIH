@@ -9,6 +9,8 @@ export type DraftRequest = {
   media: Array<{ storagePath: string; mimeType: string; frameTimeMs?: number }>;
   trainerInstructions: string;
   locale: string;
+  expectedRevision?: number;
+  expectedHash?: string;
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -28,6 +30,10 @@ export function validateDraftRequest(body: unknown): { ok: true; value: DraftReq
   }
   if (typeof b.trainerInstructions !== "string") return { ok: false, error: "Invalid trainerInstructions" };
   if (typeof b.locale !== "string" || !b.locale) return { ok: false, error: "Invalid locale" };
+  if (b.expectedRevision !== undefined && (!Number.isInteger(b.expectedRevision) || b.expectedRevision < 1))
+    return { ok: false, error: "Invalid expectedRevision" };
+  if (b.expectedHash !== undefined && (typeof b.expectedHash !== "string" || !/^[0-9a-f]{64}$/.test(b.expectedHash)))
+    return { ok: false, error: "Invalid expectedHash" };
   return { ok: true, value: b as DraftRequest };
 }
 
@@ -80,6 +86,80 @@ export function cacheKey(req: DraftRequest, templateHash: string): string {
     locale: req.locale,
     templateHash,
   });
+}
+
+// P0 media policy mirrors the browser staging limits.
+export const ALLOWED_MEDIA_MIME = ["image/jpeg", "image/png", "image/webp", "video/mp4"];
+export const MAX_MEDIA_FILES = 10;
+export const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
+
+export function validateMediaRefs(
+  media: DraftRequest["media"],
+): { ok: true } | { ok: false; error: string } {
+  if (!Array.isArray(media) || media.length === 0) return { ok: false, error: "At least one media ref is required" };
+  if (media.length > MAX_MEDIA_FILES) return { ok: false, error: `At most ${MAX_MEDIA_FILES} media refs are supported` };
+  for (const m of media) {
+    if (!m.storagePath || typeof m.storagePath !== "string") return { ok: false, error: "Media ref is missing storagePath" };
+    if (!ALLOWED_MEDIA_MIME.includes(m.mimeType)) return { ok: false, error: `Media MIME ${m.mimeType} is not allowed` };
+    if (m.storagePath.startsWith("http://") || m.storagePath.startsWith("https://")) {
+      return { ok: false, error: "Media storagePath must be a scoped storage path, not a URL" };
+    }
+  }
+  return { ok: true };
+}
+
+// Stale-generation guard: a result computed for an older revision/hash must
+// never overwrite the trainer's newer edits. Returns 'stale' when the caller
+// pinned expectations and the current row no longer matches them.
+export function checkStale(
+  current: { revision: number; contentHash: string },
+  expected?: { revision?: number; contentHash?: string },
+): "ok" | "stale" {
+  if (!expected || (expected.revision === undefined && expected.contentHash === undefined)) return "ok";
+  if (expected.revision !== undefined && expected.revision !== current.revision) return "stale";
+  if (expected.contentHash !== undefined && expected.contentHash !== current.contentHash) return "stale";
+  return "ok";
+}
+
+export type VisionMedia = { mimeType: string; base64: string };
+
+export type PromptPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+// Server downloads authorized bytes with the service role and embeds them as
+// data URLs, so the model sees actual workplace media instead of opaque paths.
+// Only image bytes are embedded; video refs stay as validated metadata until a
+// frame-extraction step lands.
+export function buildVisionContent(
+  req: DraftRequest,
+  templateJson: unknown,
+  images: VisionMedia[],
+): Array<{ role: string; content: string | PromptPart[] }> {
+  const brief: PromptPart[] = [
+    {
+      type: "text",
+      text: JSON.stringify({
+        template: templateJson,
+        workplaceName: req.workplaceName,
+        trainerInstructions: req.trainerInstructions,
+        locale: req.locale,
+      }),
+    },
+  ];
+  for (const img of images) {
+    brief.push({ type: "image_url", image_url: { url: `data:${img.mimeType};base64,${img.base64}` } });
+  }
+  return [
+    {
+      role: "system",
+      content:
+        "You adapt an approved safety template to a workplace. Return STRICT JSON only matching TrainingDraft. " +
+        "Do not invent or alter safety invariants, pass rules, or critical-failure rules. " +
+        "No JavaScript, HTML, executable scripts, or arbitrary asset URLs. Unknown fire type, route safety, or geometry requires trainer confirmation fields.",
+    },
+    { role: "user", content: brief },
+  ];
 }
 
 export function buildPrompt(req: DraftRequest, templateJson: unknown): Array<{ role: string; content: string }> {

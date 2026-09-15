@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { evaluateAttempt, type Scenario } from "../functions/_shared/evaluate-attempt.js";
 import {
+  buildVisionContent,
   cacheKey,
+  checkStale,
   validateDraftJson,
   validateDraftRequest,
+  validateMediaRefs,
 } from "../functions/_shared/generate-draft-helpers.js";
 
 const fireScenario: Scenario = {
@@ -116,5 +119,49 @@ describe("generate-draft helpers (T07 fixture parser)", () => {
       locale: "en-IN",
     };
     expect(cacheKey(req, "t@1")).toBe(cacheKey(req, "t@1"));
+  });
+});
+
+describe("media policy + stale guard (E05)", () => {
+  it("rejects bad media refs", () => {
+    expect(validateMediaRefs([]).ok).toBe(false);
+    expect(
+      validateMediaRefs([{ storagePath: "o/d.jpg", mimeType: "application/pdf" }]).ok,
+    ).toBe(false);
+    expect(
+      validateMediaRefs([{ storagePath: "https://evil.example/x.jpg", mimeType: "image/jpeg" }]).ok,
+    ).toBe(false);
+    expect(
+      validateMediaRefs(
+        Array.from({ length: 11 }, (_, i) => ({ storagePath: `o/${i}.jpg`, mimeType: "image/jpeg" })),
+      ).ok,
+    ).toBe(false);
+    expect(validateMediaRefs([{ storagePath: "o/a.jpg", mimeType: "image/jpeg" }]).ok).toBe(true);
+  });
+
+  it("accepts pinned revision/hash and flags stale generations", () => {
+    const current = { revision: 2, contentHash: "a".repeat(64) };
+    expect(checkStale(current)).toBe("ok");
+    expect(checkStale(current, { revision: 2, contentHash: "a".repeat(64) })).toBe("ok");
+    expect(checkStale(current, { revision: 1, contentHash: "a".repeat(64) })).toBe("stale");
+    expect(checkStale(current, { revision: 2, contentHash: "b".repeat(64) })).toBe("stale");
+  });
+
+  it("embeds authorized image bytes as data URLs, never raw paths", () => {
+    const req = {
+      draftId: "00000000-0000-4000-8000-000000000001",
+      templateId: "fire-safety-induction",
+      templateVersion: 1,
+      workplaceName: "Mine A",
+      media: [{ storagePath: "org/draft/a.jpg", mimeType: "image/jpeg" }],
+      trainerInstructions: "",
+      locale: "en-IN",
+    };
+    const messages = buildVisionContent(req, { templateId: req.templateId }, [
+      { mimeType: "image/jpeg", base64: "QUJD" },
+    ]);
+    const user = messages.find((m) => m.role === "user");
+    expect(JSON.stringify(user)).toContain("data:image/jpeg;base64,QUJD");
+    expect(JSON.stringify(user)).not.toContain("org/draft/a.jpg");
   });
 });

@@ -6,10 +6,14 @@
 // draftId; server returns draft; client discards if its draft changed).
 import { createClient } from "npm:@supabase/supabase-js@2";
 import {
-  buildPrompt,
+  buildVisionContent,
   cacheKey,
+  checkStale,
+  MAX_MEDIA_BYTES,
   validateDraftJson,
   validateDraftRequest,
+  validateMediaRefs,
+  type VisionMedia,
 } from "../_shared/generate-draft-helpers.ts";
 
 const jsonHeaders = {
@@ -76,9 +80,49 @@ Deno.serve(async (request) => {
     .select("id, organization_id, revision, content_hash")
     .eq("id", req.draftId)
     .single();
-  const draftOrg = (draft as { organization_id?: string } | null)?.organization_id;
+  const draftRow = draft as { organization_id?: string; revision?: number; content_hash?: string } | null;
+  const draftOrg = draftRow?.organization_id;
   if (!draft) return response({ error: "Unknown draft" }, 400);
   if (draftOrg !== callerOrg) return response({ error: "Cross-organization access denied" }, 403);
+
+  // Stale-generation guard: the caller pins the revision/hash it started from.
+  // A trainer edit in flight means this result must be discarded, never applied.
+  if (
+    checkStale(
+      { revision: draftRow?.revision ?? 0, contentHash: draftRow?.content_hash ?? "" },
+      { revision: req.expectedRevision, contentHash: req.expectedHash },
+    ) === "stale"
+  ) {
+    return response({ error: "Draft changed since generation started" }, 409);
+  }
+
+  const mediaCheck = validateMediaRefs(req.media);
+  if (!mediaCheck.ok) return response({ error: mediaCheck.error }, 400);
+
+  // Fetch authorized media bytes with the service role so the model receives
+  // actual workplace content. Private media never becomes public: bytes travel
+  // server → provider only, and paths stay org-scoped storage references.
+  const images: VisionMedia[] = [];
+  for (const item of req.media) {
+    if (!item.mimeType.startsWith("image/")) continue;
+    const { data: blob, error: dlError } = await supabase.storage
+      .from("training-media")
+      .download(item.storagePath);
+    if (dlError || !blob) {
+      const missing = (dlError?.message ?? "").toLowerCase().includes("not found");
+      return response(
+        { error: missing ? `Media not found: ${item.storagePath}` : "Media storage unavailable" },
+        missing ? 400 : 500,
+      );
+    }
+    if (blob.size > MAX_MEDIA_BYTES) {
+      return response({ error: `Media larger than the P0 limit: ${item.storagePath}` }, 400);
+    }
+    const buffer = new Uint8Array(await blob.arrayBuffer());
+    let binary = "";
+    for (const byte of buffer) binary += String.fromCharCode(byte);
+    images.push({ mimeType: item.mimeType, base64: btoa(binary) });
+  }
 
   const key = cacheKey(req, `${req.templateId}@${req.templateVersion}`);
   const hit = cache.get(key);
@@ -98,7 +142,7 @@ Deno.serve(async (request) => {
     ],
   };
 
-  const messages = buildPrompt(req, template);
+  const messages = buildVisionContent(req, template, images);
   async function callModel(extraRepairHint?: string): Promise<{ text: string; modelId: string }> {
     const payloadMessages = extraRepairHint
       ? [...messages, { role: "user", content: `Previous output was invalid: ${extraRepairHint}. Return STRICT JSON only.` }]
