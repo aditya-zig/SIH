@@ -21,6 +21,22 @@ export type SyncV2Result = {
   criticalFailure: boolean;
 };
 
+// Honest display mapping: provisional browser scores are never presented as
+// server-confirmed. Only a stored CONFIRMED server result counts as confirmed.
+export function describeQueueState(state: string, serverResult?: unknown): string {
+  if (state === "CONFIRMED") {
+    const r = serverResult as Partial<SyncV2Result> | undefined;
+    if (typeof r?.serverScore === "number") {
+      return `SERVER CONFIRMED — score ${r.serverScore}, ${r.passed ? "passed" : r.criticalFailure ? "critical failure" : "failed"}`;
+    }
+    return "SERVER CONFIRMED";
+  }
+  if (state === "SYNCING") return "SYNCING — waiting for backend acceptance";
+  if (state === "CONFLICT") return "CONFLICT — backend holds a different result for this attempt";
+  if (state === "BLOCKED") return "BLOCKED — fix sign-in or permissions, then retry";
+  return "SAVED ON THIS PHONE — pending sync";
+}
+
 export async function syncOneAttempt(
   supabaseUrl: string,
   accessToken: string,

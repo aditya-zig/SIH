@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { FIRE_FIXTURE_LABEL, fireFixturePackage } from "../templates/fire.fixture.js";
 import { DEMO_SAMPLE_LABEL, generateTrainingDraft } from "../api/generateTrainingDraft.js";
 import { compileEntities, mountTrainingScene } from "../runtime/SceneRuntime.js";
+import { listAttempts, listQueue } from "../offline/attemptQueue.js";
+import { describeQueueState } from "../api/syncAttempt.js";
 import { canPublishStored, localDraftStore, type StoredDraft } from "../authoring/draftStore.js";
 import { demoDraftFromFixture, projectDraftToPackage } from "../authoring/projectDraft.js";
 import { stageMedia, validateMediaFiles } from "../authoring/media.js";
@@ -9,8 +11,31 @@ import { getSyncContext } from "../../data.js";
 
 export function TrainerList() {
   const [drafts, setDrafts] = useState<StoredDraft[]>(() => localDraftStore.list());
+  const [deviceAttempts, setDeviceAttempts] = useState<
+    Array<{ attemptId: string; workerId: string; score: number; state: string; serverNote: string }>
+  >([]);
   useEffect(() => {
     setDrafts(localDraftStore.list());
+    void (async () => {
+      const [attempts, queue] = await Promise.all([listAttempts(), listQueue()]).catch(
+        () => [[], []] as const,
+      );
+      const byId = new Map(queue.map((q) => [q.attemptId, q]));
+      setDeviceAttempts(
+        attempts
+          .filter((a) => a.moduleId === fireFixturePackage.packageId)
+          .map((a) => {
+            const q = byId.get(a.attemptId);
+            return {
+              attemptId: a.attemptId,
+              workerId: a.workerId,
+              score: a.clientScore,
+              state: q?.state ?? "UNKNOWN",
+              serverNote: q ? describeQueueState(q.state, q.serverResult) : "Not queued",
+            };
+          }),
+      );
+    })();
   }, []);
   return (
     <main className="shell">
@@ -38,6 +63,20 @@ export function TrainerList() {
           </div>
         </section>
       ))}
+      <section className="panel attempts">
+        <div className="panel-heading">
+          <h2>Device attempts — Fire fixture</h2>
+          <span>this browser only, not server data</span>
+        </div>
+        {deviceAttempts.length === 0 && (
+          <p className="empty">No worker attempts stored on this device yet.</p>
+        )}
+        {deviceAttempts.map((a) => (
+          <p key={a.attemptId}>
+            <strong>{a.attemptId.slice(0, 8)}…</strong> worker {a.workerId.slice(0, 8)}… · provisional {a.score} · {a.state} — {a.serverNote}
+          </p>
+        ))}
+      </section>
     </main>
   );
 }

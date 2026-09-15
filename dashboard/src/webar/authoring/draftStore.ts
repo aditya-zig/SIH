@@ -40,6 +40,32 @@ export function canPublishStored(d: StoredDraft): boolean {
 
 export class LocalDraftStore {
   private readonly drafts = new Map<string, StoredDraft>();
+  private readonly storageKey = "surakshaar-drafts-v1";
+
+  constructor() {
+    // Fixture-mode drafts must survive full-page navigations, so the store
+    // hydrates from localStorage when a browser is present. Node tests use
+    // the memory map only.
+    try {
+      const raw = window.localStorage.getItem(this.storageKey);
+      if (raw) {
+        const list = JSON.parse(raw) as StoredDraft[];
+        for (const d of list) {
+          if (d && typeof d.draftId === "string") this.drafts.set(d.draftId, d);
+        }
+      }
+    } catch {
+      // No browser storage: memory map only.
+    }
+  }
+
+  private persist(): void {
+    try {
+      window.localStorage.setItem(this.storageKey, JSON.stringify([...this.drafts.values()]));
+    } catch {
+      // Storage full or unavailable: memory map still serves this page.
+    }
+  }
 
   async create(input: {
     draftId: string;
@@ -61,6 +87,7 @@ export class LocalDraftStore {
       updatedAt: new Date().toISOString(),
     };
     this.drafts.set(input.draftId, stored);
+    this.persist();
     return stored;
   }
 
@@ -90,6 +117,7 @@ export class LocalDraftStore {
     };
     next.contentHash = await hashOf(next.draft);
     this.drafts.set(draftId, next);
+    this.persist();
     return next;
   }
 
@@ -115,6 +143,7 @@ export class LocalDraftStore {
     };
     next.contentHash = await hashOf(next.draft);
     this.drafts.set(draftId, next);
+    this.persist();
     return next;
   }
 
@@ -131,6 +160,7 @@ export class LocalDraftStore {
       updatedAt: new Date().toISOString(),
     };
     this.drafts.set(draftId, next);
+    this.persist();
     return next;
   }
 }

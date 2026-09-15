@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getSyncContext } from "../../data.js";
+import { describeQueueState } from "../api/syncAttempt.js";
 import {
   FIRE_FIXTURE_LABEL,
   fireFixturePackage,
@@ -10,9 +11,11 @@ import {
   clearProgress,
   completeAttemptAtomically,
   getPackage,
+  listQueue,
   loadProgress,
   saveProgress,
   storeCompletePackage,
+  type QueueEntry,
 } from "../offline/attemptQueue.js";
 import {
   ARPlacementTracker,
@@ -61,6 +64,7 @@ export default function WorkerLearn({ packageId, version }: { packageId: string;
   const [placed, setPlaced] = useState(false);
   const [feedback, setFeedback] = useState<string>("");
   const [saveState, setSaveState] = useState<string>("");
+  const [queueEntry, setQueueEntry] = useState<QueueEntry | null>(null);
   const [score, setScore] = useState<number | null>(null);
   const sceneRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef<MountedScene | null>(null);
@@ -268,12 +272,15 @@ export default function WorkerLearn({ packageId, version }: { packageId: string;
     setScore(provisional);
     setSaveState("SAVED ON THIS PHONE");
     setPhase("result");
-    // Opportunistic drain: scheduler also fires on online/focus/startup.
+    // Opportunistic drain, then show the real stored queue state (which may
+    // still be pending offline). Provisional score is never shown as confirmed.
     const context = await getSyncContext().catch(() => null);
     if (context) {
       const { drainSyncQueue } = await import("../api/syncAttempt.js");
       await drainSyncQueue(context).catch(() => null);
     }
+    const entries = await listQueue(attempt.workerId).catch(() => []);
+    setQueueEntry(entries.find((e) => e.attemptId === attempt.attemptId) ?? null);
   };
 
   return (
@@ -339,6 +346,9 @@ export default function WorkerLearn({ packageId, version }: { packageId: string;
           <div className="panel-heading"><h2>Result</h2><span>provisional — server recomputes</span></div>
           <p>Provisional score: {score}</p>
           <p><strong>{saveState}</strong></p>
+          <p className="empty">
+            {queueEntry ? describeQueueState(queueEntry.state, queueEntry.serverResult) : "Queue state unknown — reload to re-read local state."}
+          </p>
           <p className="empty">Reconnect syncs once and reaches SERVER CONFIRMED only after backend 200. Offline queue survives reload.</p>
           <a href="/">Back to dashboard</a>
         </section>

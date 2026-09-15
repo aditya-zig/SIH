@@ -284,6 +284,11 @@ export async function getAttempt(attemptId: string): Promise<AttemptPayload | un
   return idbGet<AttemptPayload>("attempts", attemptId);
 }
 
+export async function listAttempts(workerId?: string): Promise<AttemptPayload[]> {
+  const all = await idbGetAll<AttemptPayload>("attempts");
+  return workerId === undefined ? all : all.filter((a) => a.workerId === workerId);
+}
+
 /** Legacy donor-compatible helper: queue attempt as LOCAL_DURABLE. */
 export async function queueAttempt(attempt: AttemptPayload): Promise<void> {
   await completeAttemptAtomically(attempt);

@@ -8,6 +8,7 @@ import {
   completeAttemptAtomically,
   getAttempt,
   getPackage,
+  listAttempts,
   listPendingAttempts,
   loadProgress,
   nextStateForHttp,
@@ -18,6 +19,7 @@ import {
 } from "./offline/attemptQueue.js";
 import { approveDraft, canPublish, invalidateOnEdit } from "./schema/draftApproval.js";
 import {
+  describeQueueState,
   drainSyncQueue,
   startSyncScheduler,
   syncOneAttempt,
@@ -203,6 +205,29 @@ describe("sync drain (E04 reconnect)", () => {
     const result = await drainSyncQueue(context, okFetch() as never);
     expect(result).toMatchObject({ attempted: 1, confirmed: 1 });
     expect(await listPendingAttempts(workerB)).toHaveLength(1);
+  });
+});
+
+describe("result display honesty (E07)", () => {
+  it("never presents provisional state as server-confirmed", () => {
+    expect(describeQueueState("PENDING")).toContain("SAVED ON THIS PHONE");
+    expect(describeQueueState("SYNCING")).toContain("SYNCING");
+    expect(describeQueueState("CONFLICT")).toContain("CONFLICT");
+    expect(describeQueueState("BLOCKED")).toContain("BLOCKED");
+    expect(describeQueueState("CONFIRMED", { serverScore: 75, passed: false, criticalFailure: true })).toContain(
+      "SERVER CONFIRMED",
+    );
+    expect(describeQueueState("CONFIRMED", { serverScore: 75, passed: false, criticalFailure: true })).toContain(
+      "critical failure",
+    );
+    expect(describeQueueState("PENDING")).not.toContain("SERVER CONFIRMED");
+  });
+
+  it("lists stored attempts per worker for trainer device visibility", async () => {
+    await completeAttemptAtomically(payload());
+    await completeAttemptAtomically(payload({ attemptId: "00000000-0000-4000-8000-000000000005", workerId: workerB }));
+    expect((await listAttempts(workerA)).map((a) => a.attemptId)).toEqual([payload().attemptId]);
+    expect(await getAttempt("missing")).toBeUndefined();
   });
 });
 

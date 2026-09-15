@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { evaluateAttempt } from "./evaluation/evaluateAttempt.js";
 import { validateTrainingPackage } from "./schema/validateTrainingPackage.js";
-import { LocalDraftStore, StaleDraftError, canPublishStored } from "./authoring/draftStore.js";
-import { demoDraftFromFixture, projectDraftToPackage, projectDraftToScenario } from "./authoring/projectDraft.js";
+import { LocalDraftStore, StaleDraftError, canPublishStored } from "./authoring/draftStore.js";import { demoDraftFromFixture, projectDraftToPackage, projectDraftToScenario } from "./authoring/projectDraft.js";
 import { fireFixtureScenario } from "./templates/fire.fixture.js";
 import { stageMedia, validateMediaFiles } from "./authoring/media.js";
 
@@ -76,6 +75,31 @@ describe("draft store revision + approval", () => {
     expect(canPublishStored(edited)).toBe(false);
   });
 
+  it("survives full-page navigation through browser storage", async () => {
+    const backing = new Map<string, string>();
+    (globalThis as unknown as { window: unknown }).window = {
+      localStorage: {
+        getItem: (k: string) => backing.get(k) ?? null,
+        setItem: (k: string, v: string) => void backing.set(k, v),
+        removeItem: (k: string) => void backing.delete(k),
+      },
+    };
+    try {
+      const first = new LocalDraftStore();
+      await first.create({
+        draftId: "nav1", organizationId: "o1", trainerId: "t1",
+        templateId: "fire-safety-induction", templateVersion: 1, draft: shellDraft("nav1"),
+      });
+      // A new store instance (as after window.location navigation) reloads it.
+      const second = new LocalDraftStore();
+      expect(second.get("nav1")).toMatchObject({ revision: 1, status: "AI_DRAFT" });
+    } finally {
+      delete (globalThis as unknown as { window?: unknown }).window;
+    }
+  });
+});
+
+describe("stale generation guard", () => {
   it("rejects stale generation results that predate trainer edits", async () => {
     const store = new LocalDraftStore();
     const created = await store.create({

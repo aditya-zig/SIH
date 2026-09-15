@@ -132,13 +132,24 @@ export function demoDraftFromFixture(input: {
     hazards: f.hazards,
     learningObjectives: f.learningObjectives,
     trainingSteps: f.trainingSteps,
+    // All five scene objects, including the water marker: the evaluator's
+    // critical wrong action needs a visible, clickable target, and preview
+    // must show exactly what the worker scene shows.
+    arObjects: f.scene.objects.map((o) => ({
+      id: o.id,
+      type: "hazard",
+      assetKey: o.assetKey,
+      label: o.label ?? o.id,
+      positionHint: o.position,
+      interactionType: o.interactionType,
+      relatedStep: o.relatedStepId,
+    })),
     assessmentQuestions: f.assessment.questions.map((q) => ({
       id: q.id,
       prompt: q.prompt,
       options: q.options,
       correctOption: q.correctOption,
     })),
-    arObjects: f.arObjects,
     warnings: ["Demo generation only; trainer review required."],
     reviewStatus: "AI_DRAFT",
   };
