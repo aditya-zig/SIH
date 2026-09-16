@@ -86,4 +86,4 @@ jobs:
             fi
             sleep 1
           done
-          npx playwright test dashboard/e2e/fire-journey.spec.ts --workers=1 --reporter=line
+          npx playwright test --config dashboard/e2e/playwright.config.ts --workers=1 --reporter=line
