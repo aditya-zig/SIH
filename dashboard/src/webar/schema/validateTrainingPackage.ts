@@ -147,12 +147,14 @@ export function validateTrainingPackage(pkg: unknown): string[] {
     }
   }
 
-  if (p.templateId === "fire-safety-induction") {
+  // The richer flagship contract is opt-in through lessons so already-published
+  // Fire packages without lessons remain readable and immutable.
+  if (p.templateId === "fire-safety-induction" && Array.isArray(p.lessons)) {
     for (const id of ["select-extinguisher", "pull", "aim", "squeeze", "sweep-left", "sweep-right", "judgment"]) {
-      if (!stepIds.has(id)) errors.push(`Fire fixture package is missing mandatory step: ${id}`);
+      if (!stepIds.has(id)) errors.push(`Fire flagship package is missing mandatory step: ${id}`);
     }
-    if (!Array.isArray(p.lessons) || p.lessons.length !== 5) errors.push("Fire fixture package must contain five learning lessons.");
-    if (!Array.isArray(p.assessment?.questions) || p.assessment.questions.length !== 5) errors.push("Fire fixture package must contain five assessment questions.");
+    if (p.lessons.length !== 5) errors.push("Fire flagship package must contain five learning lessons.");
+    if (!Array.isArray(p.assessment?.questions) || p.assessment.questions.length !== 5) errors.push("Fire flagship package must contain five assessment questions.");
   }
   return errors;
 }
