@@ -69,13 +69,11 @@ export const fireFixturePackage: TrainingPackage = {
       { id: "co2", assetKey: "fire_extinguisher", position: [-1.2, 1, -2], interactionType: "select", relatedStepId: "select-extinguisher", label: "CO2 extinguisher" },
       { id: "pin", assetKey: "fire_extinguisher", position: [-0.8, 0.75, -1.8], interactionType: "interact", relatedStepId: "pull", label: "Extinguisher pin" },
       { id: "aim_zone", assetKey: "danger_zone", position: [0, 0.35, -2.1], interactionType: "select", relatedStepId: "aim", label: "Aim target zone" },
-      { id: "trigger", assetKey: "fire_extinguisher", position: [-0.45, 1.0, -1.8], interactionType: "interact", relatedStepId: "squeeze", label: "Trigger control" },
+      { id: "trigger", assetKey: "fire_extinguisher", position: [-0.45, 1.0, -1.8], interactionType: "hold", relatedStepId: "squeeze", label: "Trigger control" },
       { id: "sweep_left", assetKey: "warning_marker", position: [-0.65, 0.35, -2.1], interactionType: "select", relatedStepId: "sweep-left", label: "Sweep left target" },
       { id: "sweep_right", assetKey: "warning_marker", position: [0.65, 0.35, -2.1], interactionType: "select", relatedStepId: "sweep-right", label: "Sweep right target" },
     ],
-    zones: [
-      { id: "training-zone", label: "Compact training zone", center: [0, 0, -2], size: [4, 2.5, 4] },
-    ],
+    zones: [{ id: "training-zone", label: "Compact training zone", center: [0, 0, -2], size: [4, 2.5, 4] }],
     lighting: { ambient: 0.8, directional: 1.0 },
   },
   assets: [
@@ -84,9 +82,7 @@ export const fireFixturePackage: TrainingPackage = {
     { assetKey: "warning_marker", url: "/models/warning_marker.glb" },
     { assetKey: "danger_zone", url: "/models/danger_zone.glb" },
   ],
-  hazards: [
-    { id: "h1", label: "Electrical fire", severity: "high", reason: "Fixture hazard", trainerMustConfirm: true },
-  ],
+  hazards: [{ id: "h1", label: "Electrical fire", severity: "high", reason: "Fixture hazard", trainerMustConfirm: true }],
   learningObjectives: [
     "Recognize fire, smoke and heat danger",
     "Know when not to continue firefighting",
@@ -155,7 +151,7 @@ export const fireFixturePackage: TrainingPackage = {
     { id: "select-extinguisher", order: 1, instruction: "Select the marked CO2 extinguisher for this demo scenario.", voiceText: "Select the marked CO2 extinguisher.", expectedAction: "select:co2", successFeedback: "Equipment selected.", failureFeedback: "Wrong demo choice.", remediation: "Select the marked CO2 extinguisher. The fixture remains not safety-approved." },
     { id: "pull", order: 2, instruction: "Pull: interact with the highlighted pin target.", voiceText: "Pull the pin target.", expectedAction: "interact:pin", successFeedback: "Pull recorded.", failureFeedback: "Try the pin target.", remediation: "Use the highlighted pin control." },
     { id: "aim", order: 3, instruction: "Aim: select the marked target zone.", voiceText: "Aim at the marked target zone.", expectedAction: "select:aim_zone", successFeedback: "Aim target recorded.", failureFeedback: "Aim at the marked target.", remediation: "Select the target zone near the simulated fire." },
-    { id: "squeeze", order: 4, instruction: "Squeeze: interact with the trigger control.", voiceText: "Use the trigger control.", expectedAction: "interact:trigger", successFeedback: "Trigger interaction recorded.", failureFeedback: "Use the trigger control.", remediation: "The browser records the trigger interaction only; it does not measure physical force." },
+    { id: "squeeze", order: 4, instruction: "Squeeze: press and hold the trigger target.", voiceText: "Press and hold the trigger target.", expectedAction: "hold:trigger", successFeedback: "Hold interaction recorded.", failureFeedback: "Hold the trigger target longer.", remediation: "The browser measures a bounded hold only; it does not measure physical force." },
     { id: "sweep-left", order: 5, instruction: "Sweep: cross the left target first.", voiceText: "Sweep to the left target.", expectedAction: "select:sweep_left", successFeedback: "Left sweep target recorded.", failureFeedback: "Start with the left target.", remediation: "Select the left sweep zone first." },
     { id: "sweep-right", order: 6, instruction: "Sweep: now cross the right target.", voiceText: "Sweep to the right target.", expectedAction: "select:sweep_right", successFeedback: "PASS practical complete.", failureFeedback: "Finish on the right target.", remediation: "Select the right sweep zone after the left zone." },
     { id: "judgment", order: 7, instruction: "Conditions worsen. Choose the safest next action in the scenario.", voiceText: "Conditions are worsening. Choose what to do next.", expectedAction: "decision:evacuate", successFeedback: "Judgment recorded.", failureFeedback: "Unsafe demo decision.", remediation: "In this scenario, raise the alarm and evacuate." },
@@ -168,7 +164,7 @@ export const fireFixturePackage: TrainingPackage = {
     { id: "co2", type: "tool", assetKey: "fire_extinguisher", label: "CO2 extinguisher", interactionType: "select", relatedStep: "select-extinguisher" },
     { id: "pin", type: "part", assetKey: "fire_extinguisher", label: "Pin", interactionType: "interact", relatedStep: "pull" },
     { id: "aim_zone", type: "target", assetKey: "danger_zone", label: "Aim target", interactionType: "select", relatedStep: "aim" },
-    { id: "trigger", type: "part", assetKey: "fire_extinguisher", label: "Trigger", interactionType: "interact", relatedStep: "squeeze" },
+    { id: "trigger", type: "part", assetKey: "fire_extinguisher", label: "Trigger", interactionType: "hold", relatedStep: "squeeze" },
     { id: "sweep_left", type: "target", assetKey: "warning_marker", label: "Sweep left", interactionType: "select", relatedStep: "sweep-left" },
     { id: "sweep_right", type: "target", assetKey: "warning_marker", label: "Sweep right", interactionType: "select", relatedStep: "sweep-right" },
   ],
@@ -183,7 +179,7 @@ export const fireFixturePackage: TrainingPackage = {
       { stepId: "select-extinguisher", text: "Select the marked CO2 extinguisher." },
       { stepId: "pull", text: "Pull the pin target." },
       { stepId: "aim", text: "Aim at the marked target zone." },
-      { stepId: "squeeze", text: "Use the trigger control." },
+      { stepId: "squeeze", text: "Press and hold the trigger target." },
       { stepId: "sweep-left", text: "Sweep to the left target." },
       { stepId: "sweep-right", text: "Sweep to the right target." },
       { stepId: "judgment", text: "Conditions are worsening. Choose what to do next." },
@@ -193,7 +189,9 @@ export const fireFixturePackage: TrainingPackage = {
 };
 
 function wrongAnswers(correct: string, options: readonly string[]) {
-  return options.filter((option) => option !== correct).map((targetId) => ({ kind: "answer", targetId, penalty: 5, critical: false }));
+  return options
+    .filter((option) => option !== correct)
+    .map((targetId) => ({ kind: "answer", targetId, penalty: 0, critical: false, advance: true }));
 }
 
 export const fireFixtureScenario = {
@@ -217,7 +215,7 @@ export const fireFixtureScenario = {
     },
     { id: "pull", score: 5, dimension: "practical" as const, accept: [{ kind: "interact", targetId: "pin" }] },
     { id: "aim", score: 10, dimension: "practical" as const, accept: [{ kind: "select", targetId: "aim_zone" }] },
-    { id: "squeeze", score: 10, dimension: "practical" as const, accept: [{ kind: "interact", targetId: "trigger" }] },
+    { id: "squeeze", score: 10, dimension: "practical" as const, accept: [{ kind: "hold", targetId: "trigger" }] },
     { id: "sweep-left", score: 7, dimension: "practical" as const, accept: [{ kind: "select", targetId: "sweep_left" }] },
     { id: "sweep-right", score: 8, dimension: "practical" as const, accept: [{ kind: "select", targetId: "sweep_right" }] },
     {
