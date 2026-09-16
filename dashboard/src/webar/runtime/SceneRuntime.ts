@@ -115,8 +115,8 @@ export function transitionRuntimeStatus(current: RuntimeStatus, event: RuntimeEv
   }
 }
 
-// Deterministic preview root so desktop browser tests never depend on AR.
 export const DEFAULT_ROOT_POSITION: [number, number, number] = [0, 0, 0];
+export const HOLD_MIN_MS = 600;
 
 export function formatVec3(v: [number, number, number]): string {
   return `${v[0]} ${v[1]} ${v[2]}`;
@@ -128,8 +128,6 @@ export type MountedScene = {
   reticle: HTMLElement;
 };
 
-// A-Frame ships without bundled TypeScript types; load it lazily in browsers
-// only so Node unit tests never execute browser-only custom-element code.
 async function ensureAFrame(): Promise<void> {
   if (typeof window === "undefined") return;
   if ((window as unknown as { AFRAME?: unknown }).AFRAME) return;
@@ -193,17 +191,30 @@ export function mountTrainingScene(
       else if (k === "data-step-id") (entity as HTMLElement).dataset.stepId = v;
       else entity.setAttribute(k, v);
     }
-    // One entity interaction emits exactly one package-defined action.
-    entity.addEventListener("click", () => {
-      const kind = entity.getAttribute("data-kind") ?? spec.attrs["data-kind"] ?? "";
-      const targetId = entity.getAttribute("data-target") ?? spec.objectId;
-      opts.onAction?.({ kind, targetId });
-    });
+    const kind = entity.getAttribute("data-kind") ?? spec.attrs["data-kind"] ?? "";
+    const targetId = entity.getAttribute("data-target") ?? spec.objectId;
+    if (kind === "hold") {
+      let holdStartedAt: number | null = null;
+      const startHold = () => { holdStartedAt = Date.now(); };
+      const endHold = () => {
+        const startedAt = holdStartedAt;
+        holdStartedAt = null;
+        if (startedAt !== null && Date.now() - startedAt >= HOLD_MIN_MS) {
+          opts.onAction?.({ kind, targetId });
+        }
+      };
+      entity.addEventListener("mousedown", startHold);
+      entity.addEventListener("mouseup", endHold);
+      entity.addEventListener("touchstart", startHold);
+      entity.addEventListener("touchend", endHold);
+    } else {
+      // One entity interaction emits exactly one package-defined action.
+      entity.addEventListener("click", () => opts.onAction?.({ kind, targetId }));
+    }
     root.appendChild(entity);
   }
   scene.appendChild(root);
 
-  // Placement reticle: hidden until AR hit-test data arrives.
   const reticle = doc.createElement("a-ring");
   reticle.setAttribute("id", "placement-reticle");
   reticle.setAttribute("radius-inner", "0.08");
@@ -236,8 +247,6 @@ export async function enterAR(sceneEl: HTMLElement): Promise<RuntimeStatus> {
   }
 }
 
-// Single package-root placement. Before placement the reticle shows only when
-// XR hit-test data exists; on select/tap the root locks to the hit result.
 export function setReticleVisible(reticleEl: HTMLElement, visible: boolean): void {
   reticleEl.setAttribute("visible", visible ? "true" : "false");
 }
@@ -259,10 +268,6 @@ export function applyHitPose(
   return placed;
 }
 
-// ---- E03: real WebXR hit-test placement ----
-// The session init below is what A-Frame receives through the `webxr`
-// component: immersive-ar with hit-test required, local-floor preferred.
-// Desktop preview never touches this path; it uses DEFAULT_ROOT_POSITION.
 export const AR_SESSION_INIT = {
   requiredFeatures: ["hit-test"],
   optionalFeatures: ["local-floor"],
@@ -276,8 +281,6 @@ export function configureARFeatures(sceneEl: HTMLElement): void {
   );
 }
 
-// Minimal structural XR types so unit tests can inject doubles. The real
-// WebXR objects satisfy these shapes; no DOM XR globals are referenced here.
 export type XRPoseLike = {
   transform: {
     position: { x: number; y: number; z: number };
@@ -307,7 +310,6 @@ export type HitPose = {
   orientation?: [number, number, number, number];
 };
 
-// Pure hit extraction: first valid result wins, anything else is no-hit.
 export function extractHitPose(
   frame: XRFrameLike,
   hitSource: XRHitTestSourceLike,
@@ -343,9 +345,6 @@ export type ARTrackerHooks = {
   onPlaced?: (position: [number, number, number]) => void;
 };
 
-// Owns one immersive-AR placement episode: session entry, hit-test source,
-// per-frame reticle updates, select-to-place, and full cleanup. Preview mode
-// never constructs this; it is AR-only.
 export class ARPlacementTracker {
   latestPose: HitPose | null = null;
   private session: XRSessionLike | null = null;
@@ -399,7 +398,6 @@ export class ARPlacementTracker {
     } catch {
       return "XR_FAILED";
     }
-    // local-floor keeps the root at floor height; viewer space still works.
     let refSpace: XRReferenceSpaceLike;
     try {
       refSpace = await session.requestReferenceSpace("local-floor");
@@ -436,8 +434,6 @@ export class ARPlacementTracker {
     this.rafId = this.session.requestAnimationFrame(this.onFrame);
   };
 
-  // Real XR select path and the on-screen lock button share this: placement
-  // requires a currently visible, valid reticle pose. Never a fixed origin.
   placeFromReticle(): boolean {
     if (!this.running || !this.latestPose) return false;
     const position = this.latestPose.position;
@@ -470,7 +466,6 @@ export class ARPlacementTracker {
   }
 }
 
-// Voice provider boundary. Text instruction always visible; voice failure never blocks.
 export type VoiceProvider = {
   speak: (text: string) => boolean;
 };

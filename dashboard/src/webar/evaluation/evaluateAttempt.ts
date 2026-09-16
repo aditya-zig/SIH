@@ -59,6 +59,7 @@ export function evaluateAttempt(
     if (wrongAction) {
       score -= wrongAction.penalty;
       criticalFailure = criticalFailure || wrongAction.critical;
+      if (wrongAction.advance) stepIndex += 1;
       evaluated.push({
         ...event,
         outcome: "penalized",

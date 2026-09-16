@@ -6,11 +6,13 @@ export type ScenarioAction = {
 export type WrongScenarioAction = ScenarioAction & {
   penalty: number;
   critical: boolean;
+  advance?: boolean;
 };
 
 export type ScenarioStep = {
   id: string;
   score: number;
+  dimension?: "knowledge" | "practical" | "judgment";
   accept: ScenarioAction[];
   wrongActions?: WrongScenarioAction[];
 };
@@ -89,6 +91,7 @@ export function evaluateAttempt(
     if (wrongAction) {
       score -= wrongAction.penalty;
       criticalFailure ||= wrongAction.critical;
+      if (wrongAction.advance) stepIndex += 1;
       evaluated.push({
         ...event,
         outcome: "penalized",
