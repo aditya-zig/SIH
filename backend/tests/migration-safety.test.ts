@@ -22,10 +22,11 @@ function source(...parts: string[]): string {
 const m1 = () => sql("202609150001_webar_authoring_ownership.sql");
 const m2 = () => sql("202609150002_publish_training_draft.sql");
 const m3 = () => sql("202609150003_worker_sync_v2.sql");
+const m5 = () => sql("202609160001_preserve_legacy_shared_module_reads.sql");
 const syncAttempt = () => source("functions", "sync-attempt", "index.ts");
 
 describe("migration safety contract", () => {
-  it("authoring migration scopes drafts and new modules by organization without breaking legacy shared modules", () => {
+  it("authoring migration scopes drafts and modules by organization", () => {
     const s = m1();
     expect(s).toContain("enable row level security");
     expect(s).toContain("current_organization_id()");
@@ -33,23 +34,28 @@ describe("migration safety contract", () => {
     expect(s).toMatch(/for select to authenticated/);
     expect(s).toMatch(/for insert to authenticated/);
     expect(s).toMatch(/for update to authenticated/);
-    // Workers get no draft access: no draft policy mentions the worker role.
     const draftPolicies = s.split("on public.training_drafts").slice(1).join(" ");
     expect(draftPolicies).not.toMatch(/'worker'/);
-    // Old broad policy names are retired. New WebAR rows are org-scoped, while
-    // pre-WebAR NULL-org modules retain their existing cross-org read contract.
     expect(s).toContain('drop policy if exists "published modules are readable"');
     expect(s).toContain("org members read own org modules");
     expect(s).toContain("org members read own org module versions");
+  });
+
+  it("forward compatibility migration preserves legacy shared modules only", () => {
+    const s = m5();
+    expect(s).toContain('drop policy if exists "org members read own org modules"');
+    expect(s).toContain('drop policy if exists "org members read own org module versions"');
     expect(s).toMatch(/organization_id\s+is\s+null/i);
     expect(s).toMatch(/module\.organization_id\s+is\s+null/i);
+    expect(s).toContain("organization_id = public.current_organization_id()");
+    expect(s).toContain("module.organization_id = public.current_organization_id()");
   });
 
   it("authoring migration stays legacy-safe and never mutates versions", () => {
     const s = m1();
     expect(s).toContain("add column if not exists organization_id");
     expect(s).not.toMatch(/training_modules[^;]*set not null/i);
-    for (const migration of [m1(), m2(), m3()]) {
+    for (const migration of [m1(), m2(), m3(), m5()]) {
       expect(migration).not.toMatch(/update\s+(public\.)?module_versions/i);
       expect(migration).not.toMatch(/delete\s+from\s+(public\.)?module_versions/i);
     }
@@ -60,7 +66,6 @@ describe("migration safety contract", () => {
     expect(s).toMatch(/on conflict \(slug\) do nothing/i);
     expect(s).toMatch(/for update/i);
     expect(s).toContain("coalesce(max(version), 0) + 1");
-    // Approval and authorization gates.
     expect(s).toContain("Trainer role required");
     expect(s).toContain("Cross-organization draft access denied");
     expect(s).toContain("approved_hash");
@@ -74,8 +79,6 @@ describe("migration safety contract", () => {
       expect(s).toMatch(/revoke all on function/);
     }
     expect(m2()).toMatch(/grant execute on function public\.publish_training_draft\(uuid\) to authenticated/);
-    // Worker persistence accepts trusted server-evaluated fields, so it must
-    // remain service_role-only and must never be directly callable by workers.
     expect(m3()).not.toMatch(
       /grant execute on function public\.persist_worker_evaluated_attempt[\s\S]*?\)\s+to authenticated;/i,
     );
@@ -87,17 +90,9 @@ describe("migration safety contract", () => {
   it("worker sync derives identity from the verified bearer, never the request", () => {
     const migration = m3();
     const edge = syncAttempt();
-
-    // The Edge Function verifies the caller's bearer token using Supabase Auth.
     expect(edge).toContain("supabase.auth.getUser(token)");
-    // Worker-v2 payloads explicitly reject a client-supplied workerId.
     expect(edge).toContain('if ("workerId" in (value as object)) return false;');
-    // The service-role RPC receives only the verified Auth user id.
     expect(edge).toContain("p_worker_id: userData.user.id");
-
-    // A service-role PostgREST call does not carry the worker's auth.uid().
-    // Therefore the persistence RPC must not pretend auth.uid() is the worker;
-    // it re-validates the server-provided worker id against profiles/workers.
     expect(migration).not.toContain("auth.uid()");
     expect(migration).toContain("Worker role required");
     expect(migration).toContain("Cross-organization module access denied");
@@ -109,7 +104,6 @@ describe("migration safety contract", () => {
     expect(s).toContain("Attempt id was submitted with different evidence");
     expect(s).toContain("Attempt id belongs to another worker");
     expect(s).toMatch(/on conflict \(id\) do nothing/i);
-    // Certificates are looked up before insert: no duplicates on retry.
     expect(s).toContain("where attempt_id = p_attempt_id");
   });
 });
