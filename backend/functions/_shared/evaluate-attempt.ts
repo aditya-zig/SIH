@@ -11,6 +11,7 @@ export type WrongScenarioAction = ScenarioAction & {
 export type ScenarioStep = {
   id: string;
   score: number;
+  dimension?: "knowledge" | "practical" | "judgment";
   accept: ScenarioAction[];
   wrongActions?: WrongScenarioAction[];
 };
