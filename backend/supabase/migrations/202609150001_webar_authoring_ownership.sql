@@ -5,9 +5,7 @@
 -- Adds nullable WebAR publication metadata to module_versions.
 -- Creates training_drafts with approval invariant fields + deterministic
 -- package/scenario projections used by the publish RPC.
--- Replaces module/version read policy with organization scoping for new WebAR
--- modules while preserving the legacy shared-module read contract for rows whose
--- organization_id remains NULL.
+-- Replaces module/version read policy with organization scoping.
 
 -- 1. training_modules.organization_id (nullable for legacy rows)
 alter table public.training_modules
@@ -83,18 +81,14 @@ create policy "trainers update own org drafts"
     and public.current_profile_role() in ('trainer','admin')
   );
 
--- 4. Organization-scoped module/version reads for new WebAR rows.
--- Existing production modules predate organization ownership and are intentionally
--- shared across organizations. Keep those NULL-org rows readable exactly as they
--- were before this migration; only non-NULL WebAR rows are tenant-scoped.
+-- 4. Organization-scoped module/version reads.
+-- Legacy rows with NULL organization_id are NOT readable by the new policy;
+-- they remain only for explicit admin migration tooling via service_role (bypasses RLS).
 drop policy if exists "published modules are readable" on public.training_modules;
 create policy "org members read own org modules"
   on public.training_modules for select to authenticated using (
     active
-    and (
-      organization_id is null
-      or organization_id = public.current_organization_id()
-    )
+    and organization_id = public.current_organization_id()
   );
 
 drop policy if exists "published module versions are readable" on public.module_versions;
@@ -104,10 +98,7 @@ create policy "org members read own org module versions"
       select 1 from public.training_modules module
       where module.id = module_id
         and module.active
-        and (
-          module.organization_id is null
-          or module.organization_id = public.current_organization_id()
-        )
+        and module.organization_id = public.current_organization_id()
     )
   );
 
