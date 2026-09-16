@@ -173,7 +173,7 @@ export type TrainingPackage = {
 
 export type CompetencyDimension = "knowledge" | "practical" | "judgment";
 export type ScenarioAction = { kind: string; targetId: string };
-export type WrongScenarioAction = ScenarioAction & { penalty: number; critical: boolean };
+export type WrongScenarioAction = ScenarioAction & { penalty: number; critical: boolean; advance?: boolean };
 export type ScenarioStep = {
   id: string;
   score: number;
