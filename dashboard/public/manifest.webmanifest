@@ -1,0 +1,9 @@
+{
+  "name": "SurakshaAR",
+  "short_name": "SurakshaAR",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b100c",
+  "theme_color": "#111812",
+  "description": "Offline-capable workplace AR safety training"
+}
