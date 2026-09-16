@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isFlagshipJourneyPackage } from "./pages/FlagshipWorkerJourney.js";
 import { fireFixturePackage, fireFixtureScenario } from "./templates/fire.fixture.js";
 
 describe("Fire flagship journey contract", () => {
@@ -55,5 +56,12 @@ describe("Fire flagship journey contract", () => {
       return acc;
     }, {});
     expect(totals).toMatchObject({ knowledge: 25, practical: 45, judgment: 30 });
+  });
+
+  it("routes enriched packages through the shared flagship journey", () => {
+    expect(isFlagshipJourneyPackage(fireFixturePackage, fireFixtureScenario as never)).toBe(true);
+    const legacy = structuredClone(fireFixturePackage);
+    delete legacy.lessons;
+    expect(isFlagshipJourneyPackage(legacy, fireFixtureScenario as never)).toBe(false);
   });
 });
