@@ -23,7 +23,8 @@ import {
   type MountedScene,
   type RuntimeStatus,
 } from "../runtime/SceneRuntime.js";
-import { resolveWorkerId } from "./WorkerLearn.js";
+import { FIRE_FIXTURE_LABEL } from "../templates/fire.fixture.js";
+import FlagshipWorkerJourney, { isFlagshipJourneyPackage, resolveWorkerId } from "./FlagshipWorkerJourney.js";
 
 type Phase = "loading" | "brief" | "ready" | "running" | "assessment" | "result";
 type RunMode = "preview" | "ar";
@@ -240,6 +241,20 @@ export default function PublishedWorkerLearn({ moduleSlug, version }: { moduleSl
 
   if (phase === "loading") return <main className="shell"><h1>Loading training…</h1></main>;
   if (!bundle || !pkg || !scenario) return <main className="shell"><h1>Training unavailable</h1><p className="form-error">{error || "Published package not found."}</p><a href="/">Back</a></main>;
+
+  if (isFlagshipJourneyPackage(pkg, scenario)) {
+    return (
+      <FlagshipWorkerJourney
+        moduleId={moduleSlug}
+        version={version}
+        pkg={pkg}
+        scenario={scenario}
+        offlineRecord={bundle}
+        warningLabel={pkg.templateId === "fire-safety-induction" ? FIRE_FIXTURE_LABEL : undefined}
+        sourceLabel={`Published WebAR · ${moduleSlug} v${version}`}
+      />
+    );
+  }
 
   return <main className="shell">
     <p className="eyebrow">Worker training / Published WebAR</p>
