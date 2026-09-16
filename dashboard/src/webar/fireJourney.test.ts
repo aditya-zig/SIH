@@ -86,6 +86,22 @@ describe("Fire flagship journey contract", () => {
     expect(progress).toMatchObject({ attempted: 5, correct: 4, requiredCorrect: 4, complete: true, passed: true });
   });
 
+  it("counts at most one recorded answer per knowledge step", () => {
+    const questions = fireFixturePackage.assessment.questions;
+    const first = questions[0]!;
+    const duplicate = [
+      { sequence: 1, stepId: first.id, kind: "answer", targetId: first.correctOption },
+      { sequence: 2, stepId: first.id, kind: "answer", targetId: first.correctOption },
+    ];
+    const progress = deriveKnowledgeProgress(
+      fireFixtureScenario as never,
+      questions,
+      fireFixturePackage.assessment.passThresholdPercent,
+      duplicate,
+    );
+    expect(progress).toMatchObject({ attempted: 1, correct: 1, complete: false, passed: false });
+  });
+
   it("blocks practical after 3/5 and resumes at the next unanswered quiz question", () => {
     const questions = fireFixturePackage.assessment.questions;
     const firstThree = questions.slice(0, 3).map((question, index) => ({
