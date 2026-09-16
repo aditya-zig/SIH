@@ -93,11 +93,24 @@ export type TrainingStep = {
   safetyRuleReference?: string;
 };
 
+export type TrainingLesson = {
+  id: string;
+  title: string;
+  visualLabel: string;
+  concept: string;
+  interactionPrompt: string;
+  checkPrompt: string;
+  checkOptions: string[];
+  checkAnswer: string;
+  feedback: string;
+};
+
 export type AssessmentQuestion = {
   id: string;
   prompt: string;
   options: string[];
   correctOption: string;
+  explanation?: string;
 };
 
 export type ARObject = {
@@ -195,6 +208,7 @@ export type TrainingPackage = {
   assets: AssetRef[];
   hazards: Hazard[];
   learningObjectives: string[];
+  lessons?: TrainingLesson[];
   trainingSteps: TrainingStep[];
   assessment: AssessmentDefinition;
   arObjects: ARObject[];
@@ -204,11 +218,13 @@ export type TrainingPackage = {
 };
 
 // Server evaluator projection (backend/functions/_shared/evaluate-attempt.ts).
+export type CompetencyDimension = "knowledge" | "practical" | "judgment";
 export type ScenarioAction = { kind: string; targetId: string };
 export type WrongScenarioAction = ScenarioAction & { penalty: number; critical: boolean };
 export type ScenarioStep = {
   id: string;
   score: number;
+  dimension?: CompetencyDimension;
   accept: ScenarioAction[];
   wrongActions?: WrongScenarioAction[];
 };
