@@ -31,10 +31,7 @@ export type ARObjectBlueprint = {
   relatedStep?: string;
 };
 
-export type SafetyRule = {
-  id: string;
-  text: string;
-};
+export type SafetyRule = { id: string; text: string };
 
 export type TrainingTemplate = {
   templateId: string;
@@ -57,28 +54,9 @@ export type TrainingTemplate = {
   requiredTrainerConfirmations: string[];
 };
 
-export type SourceMediaRef = {
-  storagePath: string;
-  mimeType: string;
-  frameTimeMs?: number;
-};
-
-export type DetectedObject = {
-  id: string;
-  label: string;
-  confidence?: number;
-  sourceFrame?: string;
-};
-
-export type Hazard = {
-  id: string;
-  label: string;
-  severity: string;
-  reason: string;
-  sourceFrame?: string;
-  region?: unknown;
-  trainerMustConfirm: boolean;
-};
+export type SourceMediaRef = { storagePath: string; mimeType: string; frameTimeMs?: number };
+export type DetectedObject = { id: string; label: string; confidence?: number; sourceFrame?: string };
+export type Hazard = { id: string; label: string; severity: string; reason: string; sourceFrame?: string; region?: unknown; trainerMustConfirm: boolean };
 
 export type TrainingStep = {
   id: string;
@@ -133,6 +111,7 @@ export type TrainingDraft = {
   detectedObjects: DetectedObject[];
   hazards: Hazard[];
   learningObjectives: string[];
+  lessons?: TrainingLesson[];
   trainingSteps: TrainingStep[];
   assessmentQuestions: AssessmentQuestion[];
   arObjects: ARObject[];
@@ -150,14 +129,7 @@ export type SceneObject = {
   relatedStepId?: string;
   label?: string;
 };
-
-export type SceneZone = {
-  id: string;
-  label?: string;
-  center: [number, number, number];
-  size: [number, number, number];
-};
-
+export type SceneZone = { id: string; label?: string; center: [number, number, number]; size: [number, number, number] };
 export type SceneDefinition = {
   schemaVersion: number;
   sceneTemplateId: string;
@@ -170,28 +142,10 @@ export type SceneDefinition = {
   lighting: Record<string, unknown>;
 };
 
-export type AssetRef = {
-  assetKey: string;
-  url: string;
-  hash?: string;
-  bytes?: number;
-};
-
-export type AssessmentDefinition = {
-  questions: AssessmentQuestion[];
-  passThresholdPercent: number;
-};
-
-export type EvaluationRules = {
-  requiredStepIds: string[];
-  forbiddenActions: string[];
-  quizThresholdPercent: number;
-};
-
-export type VoiceContent = {
-  locale: string;
-  lines: Array<{ stepId: string; text: string }>;
-};
+export type AssetRef = { assetKey: string; url: string; hash?: string; bytes?: number };
+export type AssessmentDefinition = { questions: AssessmentQuestion[]; passThresholdPercent: number };
+export type EvaluationRules = { requiredStepIds: string[]; forbiddenActions: string[]; quizThresholdPercent: number };
+export type VoiceContent = { locale: string; lines: Array<{ stepId: string; text: string }> };
 
 export type TrainingPackage = {
   packageId: string;
@@ -217,7 +171,6 @@ export type TrainingPackage = {
   createdAt: string;
 };
 
-// Server evaluator projection (backend/functions/_shared/evaluate-attempt.ts).
 export type CompetencyDimension = "knowledge" | "practical" | "judgment";
 export type ScenarioAction = { kind: string; targetId: string };
 export type WrongScenarioAction = ScenarioAction & { penalty: number; critical: boolean };
@@ -228,15 +181,5 @@ export type ScenarioStep = {
   accept: ScenarioAction[];
   wrongActions?: WrongScenarioAction[];
 };
-export type Scenario = {
-  id: string;
-  version: number;
-  passScore: number;
-  steps: ScenarioStep[];
-};
-export type SubmittedEvent = {
-  sequence: number;
-  stepId: string;
-  kind: string;
-  targetId: string;
-};
+export type Scenario = { id: string; version: number; passScore: number; steps: ScenarioStep[] };
+export type SubmittedEvent = { sequence: number; stepId: string; kind: string; targetId: string };
