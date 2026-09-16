@@ -6,7 +6,7 @@ const fireScenario: Scenario = {
   version: 1,
   passScore: 95,
   steps: [
-    { id: "q1", score: 5, dimension: "knowledge", accept: [{ kind: "answer", targetId: "safe-1" }], wrongActions: [{ kind: "answer", targetId: "wrong-1", penalty: 5, critical: false }] },
+    { id: "q1", score: 5, dimension: "knowledge", accept: [{ kind: "answer", targetId: "safe-1" }], wrongActions: [{ kind: "answer", targetId: "wrong-1", penalty: 0, critical: false } as never] },
     { id: "q2", score: 5, dimension: "knowledge", accept: [{ kind: "answer", targetId: "safe-2" }] },
     { id: "q3", score: 5, dimension: "knowledge", accept: [{ kind: "answer", targetId: "safe-3" }] },
     { id: "q4", score: 5, dimension: "knowledge", accept: [{ kind: "answer", targetId: "safe-4" }] },
@@ -20,7 +20,7 @@ const fireScenario: Scenario = {
     },
     { id: "pull", score: 5, dimension: "practical", accept: [{ kind: "interact", targetId: "pin" }] },
     { id: "aim", score: 10, dimension: "practical", accept: [{ kind: "select", targetId: "aim_zone" }] },
-    { id: "squeeze", score: 10, dimension: "practical", accept: [{ kind: "interact", targetId: "trigger" }] },
+    { id: "squeeze", score: 10, dimension: "practical", accept: [{ kind: "hold", targetId: "trigger" }] },
     { id: "sweep-left", score: 7, dimension: "practical", accept: [{ kind: "select", targetId: "sweep_left" }] },
     { id: "sweep-right", score: 8, dimension: "practical", accept: [{ kind: "select", targetId: "sweep_right" }] },
     {
@@ -32,6 +32,10 @@ const fireScenario: Scenario = {
     },
   ],
 };
+
+// Keep this cast local so the RED test can express the intended evaluator behavior
+// before the shared contract gains the `advance` flag.
+(fireScenario.steps[0]!.wrongActions![0] as unknown as { advance: boolean }).advance = true;
 
 function event(sequence: number, stepId: string, kind: string, targetId: string): SubmittedEvent {
   return { sequence, stepId, kind, targetId };
@@ -47,7 +51,7 @@ function correctEvents(): SubmittedEvent[] {
     event(6, "select-extinguisher", "select", "co2"),
     event(7, "pull", "interact", "pin"),
     event(8, "aim", "select", "aim_zone"),
-    event(9, "squeeze", "interact", "trigger"),
+    event(9, "squeeze", "hold", "trigger"),
     event(10, "sweep-left", "select", "sweep_left"),
     event(11, "sweep-right", "select", "sweep_right"),
     event(12, "judgment", "decision", "evacuate"),
@@ -57,6 +61,18 @@ function correctEvents(): SubmittedEvent[] {
 describe("evaluateAttempt", () => {
   it("passes the complete Fire flagship event stream", () => {
     expect(evaluateAttempt(fireScenario, correctEvents())).toMatchObject({ score: 100, passed: true, criticalFailure: false });
+  });
+
+  it("advances after one wrong knowledge answer without awarding points", () => {
+    const events = [
+      event(1, "q1", "answer", "wrong-1"),
+      event(2, "q2", "answer", "safe-2"),
+      event(3, "q3", "answer", "safe-3"),
+      event(4, "q4", "answer", "safe-4"),
+      event(5, "q5", "answer", "safe-5"),
+      ...correctEvents().slice(5),
+    ];
+    expect(evaluateAttempt(fireScenario, events)).toMatchObject({ score: 95, passed: true, criticalFailure: false });
   });
 
   it("keeps a critical practical failure sticky after all later steps finish", () => {
