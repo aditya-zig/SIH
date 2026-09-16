@@ -172,6 +172,8 @@ export default function FlagshipWorkerJourney({
   const [lessonFeedback, setLessonFeedback] = useState("");
   const [quizIndex, setQuizIndex] = useState(0);
   const [quizFeedback, setQuizFeedback] = useState("");
+  const [quizAnswered, setQuizAnswered] = useState(false);
+  const [quizNextIndex, setQuizNextIndex] = useState(0);
   const [runMode, setRunMode] = useState<RunMode | null>(null);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>("UNMOUNTED");
   const [arSupported, setArSupported] = useState<boolean | null>(null);
@@ -259,6 +261,7 @@ export default function FlagshipWorkerJourney({
       setLessonFeedback("");
       setQuizIndex(0);
       setQuizFeedback("");
+      setQuizAnswered(false);
       setStepIndex(0);
       setResumed(false);
       setPhase("learn");
@@ -275,6 +278,8 @@ export default function FlagshipWorkerJourney({
       setLessonComplete(false);
       setLessonFeedback("");
       setQuizIndex(0);
+      setQuizFeedback("");
+      setQuizAnswered(false);
       setStepIndex(0);
       setPhase("learn");
       return;
@@ -288,8 +293,9 @@ export default function FlagshipWorkerJourney({
       saved.events,
     );
     setQuizIndex(resume.quizIndex);
-    setStepIndex(resume.stepIndex);
     setQuizFeedback("");
+    setQuizAnswered(false);
+    setStepIndex(resume.stepIndex);
     setPhase(resume.phase);
   };
 
@@ -327,6 +333,7 @@ export default function FlagshipWorkerJourney({
     setLessonFeedback("");
     setQuizIndex(0);
     setQuizFeedback("");
+    setQuizAnswered(false);
     await persistProgress({
       stage: "quiz",
       nextStepIndex: 0,
@@ -338,6 +345,7 @@ export default function FlagshipWorkerJourney({
   };
 
   const answerQuestion = async (option: string) => {
+    if (quizAnswered) return;
     const question = questions[quizIndex];
     const attempt = attemptRef.current;
     if (!question || !attempt) return;
@@ -353,10 +361,11 @@ export default function FlagshipWorkerJourney({
     }
 
     const correct = last.outcome === "accepted";
-    setQuizFeedback(`${correct ? "Correct." : "Not correct."} ${question.explanation ?? ""}`.trim());
     const nextQuestion = quizIndex + 1;
     const finalQuestion = nextQuestion >= questions.length;
-    setQuizIndex(nextQuestion);
+    setQuizFeedback(`${correct ? "Correct." : "Not correct."} ${question.explanation ?? ""}`.trim());
+    setQuizNextIndex(nextQuestion);
+    setQuizAnswered(true);
     await persistProgress({
       stage: finalQuestion ? "quiz-summary" : "quiz",
       nextEvents: next,
@@ -364,6 +373,13 @@ export default function FlagshipWorkerJourney({
       nextLessonIndex: lessons.length,
       nextQuizIndex: nextQuestion,
     });
+  };
+
+  const advanceQuiz = () => {
+    const finalQuestion = quizNextIndex >= questions.length;
+    setQuizAnswered(false);
+    setQuizFeedback("");
+    setQuizIndex(quizNextIndex);
     setPhase(finalQuestion ? "quiz-summary" : "quiz");
   };
 
@@ -376,6 +392,7 @@ export default function FlagshipWorkerJourney({
     await beginAttempt(id, "quiz", lessons.length, 0);
     setQuizIndex(0);
     setQuizFeedback("");
+    setQuizAnswered(false);
     setStepIndex(0);
     setResumed(false);
     setPhase("quiz");
@@ -591,15 +608,15 @@ export default function FlagshipWorkerJourney({
         <div className="panel-heading"><h2>Knowledge check {quizIndex + 1}/{questions.length}</h2><span>{knowledgeProgress.requiredCorrect}/{questions.length} required</span></div>
         <p><strong>{question.prompt}</strong></p>
         <div style={{ display: "grid", gap: 8 }}>
-          {question.options.map((option) => <button className="text-button" key={option} onClick={() => void answerQuestion(option)}>{option}</button>)}
+          {question.options.map((option) => <button className="text-button" key={option} disabled={quizAnswered} onClick={() => void answerQuestion(option)}>{option}</button>)}
         </div>
         {quizFeedback && <p>{quizFeedback}</p>}
-        {resumed && <p className="empty">Resumed your saved training progress.</p>}
+        {quizAnswered && <button className="primary-button" onClick={advanceQuiz}>{quizNextIndex >= questions.length ? "See knowledge result" : "Next question"}</button>}
+        {resumed && !quizAnswered && <p className="empty">Resumed your saved training progress.</p>}
       </section>}
 
       {phase === "quiz-summary" && <section className="panel performance">
         <div className="panel-heading"><h2>Knowledge check complete</h2><span>{knowledgeProgress.correct}/{knowledgeProgress.total} correct</span></div>
-        {quizFeedback && <p>{quizFeedback}</p>}
         <p><strong>{knowledgeProgress.passed ? "Knowledge check passed" : "Knowledge check needs retry"}</strong></p>
         <p className="empty">{knowledgeProgress.requiredCorrect}/{knowledgeProgress.total} correct is required before the practical.</p>
         {knowledgeProgress.passed
