@@ -25,7 +25,7 @@ const m3 = () => sql("202609150003_worker_sync_v2.sql");
 const syncAttempt = () => source("functions", "sync-attempt", "index.ts");
 
 describe("migration safety contract", () => {
-  it("authoring migration scopes drafts and modules by organization", () => {
+  it("authoring migration scopes drafts and new modules by organization without breaking legacy shared modules", () => {
     const s = m1();
     expect(s).toContain("enable row level security");
     expect(s).toContain("current_organization_id()");
@@ -36,10 +36,13 @@ describe("migration safety contract", () => {
     // Workers get no draft access: no draft policy mentions the worker role.
     const draftPolicies = s.split("on public.training_drafts").slice(1).join(" ");
     expect(draftPolicies).not.toMatch(/'worker'/);
-    // Legacy open read policies are replaced with org-scoped ones.
+    // Old broad policy names are retired. New WebAR rows are org-scoped, while
+    // pre-WebAR NULL-org modules retain their existing cross-org read contract.
     expect(s).toContain('drop policy if exists "published modules are readable"');
     expect(s).toContain("org members read own org modules");
     expect(s).toContain("org members read own org module versions");
+    expect(s).toMatch(/organization_id\s+is\s+null/i);
+    expect(s).toMatch(/module\.organization_id\s+is\s+null/i);
   });
 
   it("authoring migration stays legacy-safe and never mutates versions", () => {
