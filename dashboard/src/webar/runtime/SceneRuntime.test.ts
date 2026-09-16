@@ -33,7 +33,8 @@ class FakeElement {
   getAttribute(k: string): string | null { return this.attrs.get(k) ?? null; }
   appendChild(child: FakeElement): void { this.children.push(child); }
   addEventListener(type: string, fn: Listener): void { this.listeners.set(type, [...(this.listeners.get(type) ?? []), fn]); }
-  click(): void { for (const fn of this.listeners.get("click") ?? []) fn(); }
+  dispatch(type: string): void { for (const fn of this.listeners.get(type) ?? []) fn(); }
+  click(): void { this.dispatch("click"); }
 
   queryByTarget(targetId: string): FakeElement | undefined {
     if (this.attrs.get("data-target") === targetId) return this;
@@ -78,7 +79,7 @@ describe("SceneRuntime (E01)", () => {
     expect(kinds.get("co2")).toBe("select");
     expect(kinds.get("pin")).toBe("interact");
     expect(kinds.get("aim_zone")).toBe("select");
-    expect(kinds.get("trigger")).toBe("interact");
+    expect(kinds.get("trigger")).toBe("hold");
     expect(kinds.get("sweep_left")).toBe("select");
     expect(kinds.get("sweep_right")).toBe("select");
   });
@@ -93,7 +94,24 @@ describe("SceneRuntime (E01)", () => {
     expect(onAction).toHaveBeenCalledWith({ kind: "select", targetId: "co2" });
   });
 
-  it("3. later practical target is rejected for the current practical step", () => {
+  it("3. hold target requires a bounded press before emitting squeeze", () => {
+    const onAction = vi.fn();
+    const mounted = mountForTest(onAction);
+    const trigger = mounted.root.queryByTarget("trigger")!;
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValueOnce(1000).mockReturnValueOnce(1300);
+    trigger.dispatch("mousedown");
+    trigger.dispatch("mouseup");
+    expect(onAction).not.toHaveBeenCalled();
+    now.mockReturnValueOnce(2000).mockReturnValueOnce(2700);
+    trigger.dispatch("mousedown");
+    trigger.dispatch("mouseup");
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(onAction).toHaveBeenCalledWith({ kind: "hold", targetId: "trigger" });
+    now.mockRestore();
+  });
+
+  it("4. later practical target is rejected for the current practical step", () => {
     const onAction = vi.fn();
     const mounted = mountForTest(onAction);
     mounted.root.queryByTarget("sweep_right")?.click();
@@ -108,7 +126,7 @@ describe("SceneRuntime (E01)", () => {
     expect(res.passed).toBe(false);
   });
 
-  it("4. preview placement gives a deterministic transform", () => {
+  it("5. preview placement gives a deterministic transform", () => {
     const mounted = mountForTest();
     expect(formatVec3(DEFAULT_ROOT_POSITION)).toBe("0 0 0");
     expect(placeRootAt(mounted.root as never, DEFAULT_ROOT_POSITION)).toBe("0 0 0");
@@ -120,7 +138,7 @@ describe("SceneRuntime (E01)", () => {
     expect(() => placeRootAt(mounted.root as never, [NaN, 0, 0])).toThrow("finite");
   });
 
-  it("5. AR unsupported path reports UNSUPPORTED_XR rather than success", async () => {
+  it("6. AR unsupported path reports UNSUPPORTED_XR rather than success", async () => {
     const status = await enterAR(new FakeElement("a-scene", new FakeDocument()) as never);
     expect(status).toBe("UNSUPPORTED_XR");
     expect(status).not.toBe("PLACING");
