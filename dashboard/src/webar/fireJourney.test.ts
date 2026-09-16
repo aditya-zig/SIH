@@ -120,4 +120,43 @@ describe("Fire flagship journey contract", () => {
       ),
     ).toMatchObject({ phase: "quiz-summary", knowledge: { attempted: 5, correct: 3, passed: false } });
   });
+
+  it("resumes practical at the next accepted PASS step and reaches scenario after all practical steps", () => {
+    const questions = fireFixturePackage.assessment.questions;
+    const practical = fireFixturePackage.trainingSteps.filter((step) => step.id !== "judgment");
+    const knowledge = questions.map((question, index) => ({
+      sequence: index + 1,
+      stepId: question.id,
+      kind: "answer",
+      targetId: question.correctOption,
+    }));
+    const firstTwoPractical = practical.slice(0, 2).map((step, index) => {
+      const [kind, targetId] = step.expectedAction.split(":");
+      return { sequence: knowledge.length + index + 1, stepId: step.id, kind: kind!, targetId: targetId! };
+    });
+    const partial = [...knowledge, ...firstTwoPractical];
+    expect(
+      deriveFlagshipResumeState(
+        fireFixtureScenario as never,
+        questions,
+        fireFixturePackage.assessment.passThresholdPercent,
+        practical.map((step) => step.id),
+        partial,
+      ),
+    ).toMatchObject({ phase: "ready", stepIndex: 2 });
+
+    const allPractical = practical.map((step, index) => {
+      const [kind, targetId] = step.expectedAction.split(":");
+      return { sequence: knowledge.length + index + 1, stepId: step.id, kind: kind!, targetId: targetId! };
+    });
+    expect(
+      deriveFlagshipResumeState(
+        fireFixtureScenario as never,
+        questions,
+        fireFixturePackage.assessment.passThresholdPercent,
+        practical.map((step) => step.id),
+        [...knowledge, ...allPractical],
+      ),
+    ).toMatchObject({ phase: "scenario", stepIndex: practical.length });
+  });
 });
