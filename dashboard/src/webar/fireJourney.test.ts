@@ -4,7 +4,7 @@ import { fireFixturePackage, fireFixtureScenario } from "./templates/fire.fixtur
 describe("Fire flagship journey contract", () => {
   it("ships five short learning lessons before assessment", () => {
     const pkg = fireFixturePackage as typeof fireFixturePackage & {
-      lessons?: Array<{ id: string; title: string; concept: string; checkPrompt: string; checkAnswer: string }>;
+      lessons?: ReadonlyArray<{ id: string; title: string; concept: string; checkPrompt: string; checkAnswer: string }>;
     };
     expect(pkg.lessons).toHaveLength(5);
     expect(pkg.lessons?.map((lesson) => lesson.id)).toEqual([
@@ -48,7 +48,7 @@ describe("Fire flagship journey contract", () => {
   });
 
   it("allocates 25/45/30 points to knowledge, practical and judgment", () => {
-    const steps = fireFixtureScenario.steps as Array<{ score: number; dimension?: string }>;
+    const steps = fireFixtureScenario.steps as unknown as ReadonlyArray<{ score: number; dimension?: string }>;
     const totals = steps.reduce<Record<string, number>>((acc, step) => {
       const key = step.dimension ?? "unknown";
       acc[key] = (acc[key] ?? 0) + step.score;
