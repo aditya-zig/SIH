@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getSyncContext } from "../../data.js";
 import type { SyncV2Result } from "../api/syncAttempt.js";
-import type { Scenario, TrainingPackage } from "../contracts.js";
+import type { AssessmentQuestion, Scenario, TrainingPackage } from "../contracts.js";
 import { deriveCompetencyResult, type CompetencyResult } from "../evaluation/competency.js";
 import { evaluateAttempt, type AttemptEvaluation } from "../evaluation/evaluateAttempt.js";
 import {
@@ -25,9 +25,29 @@ import {
   type RuntimeStatus,
 } from "../runtime/SceneRuntime.js";
 
-type Phase = "brief" | "downloading" | "learn" | "quiz" | "ready" | "running" | "scenario" | "result";
+type Phase = "brief" | "downloading" | "learn" | "quiz" | "quiz-summary" | "ready" | "running" | "scenario" | "result";
 type RunMode = "preview" | "ar";
 type AttemptEvent = { sequence: number; stepId: string; kind: string; targetId: string };
+type JourneyStage = "learn" | "quiz" | "quiz-summary" | "ready" | "running" | "scenario";
+type JourneyProgressFields = { stage?: JourneyStage; lessonIndex?: number; quizIndex?: number };
+type JourneyProgressInput = Parameters<typeof saveProgress>[0] & JourneyProgressFields;
+type SavedJourneyProgress = NonNullable<Awaited<ReturnType<typeof loadProgress>>> & JourneyProgressFields;
+
+export type KnowledgeProgress = {
+  attempted: number;
+  correct: number;
+  total: number;
+  requiredCorrect: number;
+  complete: boolean;
+  passed: boolean;
+};
+
+export type FlagshipResumeState = {
+  phase: "quiz" | "quiz-summary" | "ready" | "scenario";
+  quizIndex: number;
+  stepIndex: number;
+  knowledge: KnowledgeProgress;
+};
 
 export type FlagshipJourneyProps = {
   moduleId: string;
@@ -47,6 +67,63 @@ export function isFlagshipJourneyPackage(pkg: TrainingPackage, scenario: Scenari
     scenario.steps.some((step) => step.dimension === "practical") &&
     scenario.steps.some((step) => step.dimension === "judgment")
   );
+}
+
+export function deriveKnowledgeProgress(
+  scenario: Scenario,
+  questions: readonly AssessmentQuestion[],
+  thresholdPercent: number,
+  events: AttemptEvent[],
+): KnowledgeProgress {
+  const questionIds = new Set(questions.map((question) => question.id));
+  const evaluation = evaluateAttempt(scenario, events);
+  const answered = evaluation.events.filter(
+    (event) => questionIds.has(event.stepId) && (event.outcome === "accepted" || event.outcome === "penalized"),
+  );
+  const correct = answered.filter((event) => event.outcome === "accepted").length;
+  const total = questions.length;
+  const requiredCorrect = Math.ceil((total * thresholdPercent) / 100);
+  const attempted = Math.min(answered.length, total);
+  const complete = total > 0 && attempted >= total;
+  return {
+    attempted,
+    correct,
+    total,
+    requiredCorrect,
+    complete,
+    passed: complete && correct >= requiredCorrect,
+  };
+}
+
+export function deriveFlagshipResumeState(
+  scenario: Scenario,
+  questions: readonly AssessmentQuestion[],
+  thresholdPercent: number,
+  practicalStepIds: readonly string[],
+  events: AttemptEvent[],
+): FlagshipResumeState {
+  const knowledge = deriveKnowledgeProgress(scenario, questions, thresholdPercent, events);
+  if (!knowledge.complete) {
+    return { phase: "quiz", quizIndex: knowledge.attempted, stepIndex: 0, knowledge };
+  }
+  if (!knowledge.passed) {
+    return { phase: "quiz-summary", quizIndex: questions.length, stepIndex: 0, knowledge };
+  }
+
+  const practicalIds = new Set(practicalStepIds);
+  const evaluation = evaluateAttempt(scenario, events);
+  const practicalAccepted = evaluation.events.filter(
+    (event) => practicalIds.has(event.stepId) && event.outcome === "accepted",
+  ).length;
+  if (practicalAccepted < practicalStepIds.length) {
+    return {
+      phase: "ready",
+      quizIndex: questions.length,
+      stepIndex: Math.max(0, practicalAccepted),
+      knowledge,
+    };
+  }
+  return { phase: "scenario", quizIndex: questions.length, stepIndex: practicalStepIds.length, knowledge };
 }
 
 export async function resolveWorkerId(): Promise<{ workerId: string; demo: boolean }> {
@@ -87,6 +164,7 @@ export default function FlagshipWorkerJourney({
   const lessons = pkg.lessons ?? [];
   const questions = pkg.assessment.questions;
   const practicalSteps = pkg.trainingSteps.filter((step) => step.id !== "judgment");
+  const practicalStepIds = practicalSteps.map((step) => step.id);
 
   const [phase, setPhase] = useState<Phase>("brief");
   const [lessonIndex, setLessonIndex] = useState(0);
@@ -117,20 +195,52 @@ export default function FlagshipWorkerJourney({
     resolveWorkerId().then(({ workerId: id }) => setWorkerId(id)).catch(() => undefined);
   }, []);
 
-  const saveCheckpoint = async (nextEvents: AttemptEvent[], nextStepIndex = stepIndex) => {
+  const persistProgress = async (input: {
+    nextEvents?: AttemptEvent[];
+    nextStepIndex?: number;
+    stage: JourneyStage;
+    nextLessonIndex?: number;
+    nextQuizIndex?: number;
+  }) => {
     const attempt = attemptRef.current;
     if (!attempt) return;
-    await saveProgress({
+    const record: JourneyProgressInput = {
       workerId: attempt.workerId,
       packageId: moduleId,
       version,
       attemptId: attempt.attemptId,
-      stepIndex: nextStepIndex,
-      events: nextEvents,
+      stepIndex: input.nextStepIndex ?? stepIndex,
+      events: input.nextEvents ?? events,
       startedAt: attempt.startedAt,
       completed: false,
       clientScore: 0,
-    }).catch(() => undefined);
+      stage: input.stage,
+      lessonIndex: input.nextLessonIndex ?? lessonIndex,
+      quizIndex: input.nextQuizIndex ?? quizIndex,
+    };
+    await saveProgress(record).catch(() => undefined);
+  };
+
+  const beginAttempt = async (id: string, stage: JourneyStage, nextLessonIndex: number, nextQuizIndex: number) => {
+    const attempt = { attemptId: crypto.randomUUID(), startedAt: new Date().toISOString(), workerId: id };
+    attemptRef.current = attempt;
+    setEvents([]);
+    const record: JourneyProgressInput = {
+      workerId: id,
+      packageId: moduleId,
+      version,
+      attemptId: attempt.attemptId,
+      stepIndex: 0,
+      events: [],
+      startedAt: attempt.startedAt,
+      completed: false,
+      clientScore: 0,
+      stage,
+      lessonIndex: nextLessonIndex,
+      quizIndex: nextQuizIndex,
+    };
+    await saveProgress(record);
+    return attempt;
   };
 
   const prepareJourney = async () => {
@@ -140,11 +250,17 @@ export default function FlagshipWorkerJourney({
       return;
     }
     setWorkerId(id);
-    const saved = await loadProgress(id, moduleId, version).catch(() => undefined);
+    const loaded = await loadProgress(id, moduleId, version).catch(() => undefined);
+    const saved = loaded as SavedJourneyProgress | undefined;
     if (!saved || saved.completed) {
+      await beginAttempt(id, "learn", 0, 0);
       setLessonIndex(0);
       setLessonComplete(false);
       setLessonFeedback("");
+      setQuizIndex(0);
+      setQuizFeedback("");
+      setStepIndex(0);
+      setResumed(false);
       setPhase("learn");
       return;
     }
@@ -152,24 +268,29 @@ export default function FlagshipWorkerJourney({
     attemptRef.current = { attemptId: saved.attemptId, startedAt: saved.startedAt, workerId: id };
     setEvents(saved.events);
     setResumed(true);
-    if (saved.events.length === 0) {
-      setPhase("quiz");
+
+    if (saved.stage === "learn") {
+      const restoredLesson = Math.min(Math.max(saved.lessonIndex ?? 0, 0), Math.max(lessons.length - 1, 0));
+      setLessonIndex(restoredLesson);
+      setLessonComplete(false);
+      setLessonFeedback("");
+      setQuizIndex(0);
+      setStepIndex(0);
+      setPhase("learn");
       return;
     }
-    const result = evaluateAttempt(scenario, saved.events);
-    const accepted = result.events.filter((event) => event.outcome === "accepted").length;
-    if (accepted < questions.length) {
-      setQuizIndex(accepted);
-      setPhase("quiz");
-      return;
-    }
-    const practicalAccepted = accepted - questions.length;
-    if (practicalAccepted < practicalSteps.length) {
-      setStepIndex(Math.max(0, practicalAccepted));
-      setPhase("ready");
-      return;
-    }
-    setPhase("scenario");
+
+    const resume = deriveFlagshipResumeState(
+      scenario,
+      questions,
+      pkg.assessment.passThresholdPercent,
+      practicalStepIds,
+      saved.events,
+    );
+    setQuizIndex(resume.quizIndex);
+    setStepIndex(resume.stepIndex);
+    setQuizFeedback("");
+    setPhase(resume.phase);
   };
 
   const download = async () => {
@@ -195,29 +316,24 @@ export default function FlagshipWorkerJourney({
   const nextLesson = async () => {
     if (!lessonComplete) return;
     if (lessonIndex + 1 < lessons.length) {
-      setLessonIndex((index) => index + 1);
+      const next = lessonIndex + 1;
+      setLessonIndex(next);
       setLessonComplete(false);
       setLessonFeedback("");
+      await persistProgress({ stage: "learn", nextStepIndex: 0, nextLessonIndex: next, nextQuizIndex: 0 });
       return;
     }
-    const id = workerId ?? (await resolveWorkerId().catch(() => null))?.workerId;
-    if (!id) return;
-    const attempt = { attemptId: crypto.randomUUID(), startedAt: new Date().toISOString(), workerId: id };
-    attemptRef.current = attempt;
-    setEvents([]);
-    await saveProgress({
-      workerId: id,
-      packageId: moduleId,
-      version,
-      attemptId: attempt.attemptId,
-      stepIndex: 0,
-      events: [],
-      startedAt: attempt.startedAt,
-      completed: false,
-      clientScore: 0,
-    });
+    setLessonComplete(false);
+    setLessonFeedback("");
     setQuizIndex(0);
     setQuizFeedback("");
+    await persistProgress({
+      stage: "quiz",
+      nextStepIndex: 0,
+      nextLessonIndex: lessons.length,
+      nextQuizIndex: 0,
+      nextEvents: [],
+    });
     setPhase("quiz");
   };
 
@@ -229,20 +345,54 @@ export default function FlagshipWorkerJourney({
     const result = evaluateAttempt(scenario, next);
     const last = result.events[result.events.length - 1];
     setEvents(next);
-    if (last?.outcome === "accepted") {
-      setQuizFeedback(`Correct. ${question.explanation ?? ""}`);
-      const nextQuestion = quizIndex + 1;
-      await saveCheckpoint(next, 0);
-      if (nextQuestion >= questions.length) {
-        setQuizIndex(nextQuestion);
-        setPhase("ready");
-      } else {
-        setQuizIndex(nextQuestion);
-      }
+
+    if (last?.outcome !== "accepted" && last?.outcome !== "penalized") {
+      setQuizFeedback("That answer could not be recorded. Choose one of the listed options.");
+      await persistProgress({ stage: "quiz", nextEvents: next, nextStepIndex: 0, nextQuizIndex: quizIndex });
       return;
     }
-    setQuizFeedback(`Not yet. ${question.explanation ?? "Try again."}`);
-    await saveCheckpoint(next, 0);
+
+    const correct = last.outcome === "accepted";
+    setQuizFeedback(`${correct ? "Correct." : "Not correct."} ${question.explanation ?? ""}`.trim());
+    const nextQuestion = quizIndex + 1;
+    const finalQuestion = nextQuestion >= questions.length;
+    setQuizIndex(nextQuestion);
+    await persistProgress({
+      stage: finalQuestion ? "quiz-summary" : "quiz",
+      nextEvents: next,
+      nextStepIndex: 0,
+      nextLessonIndex: lessons.length,
+      nextQuizIndex: nextQuestion,
+    });
+    setPhase(finalQuestion ? "quiz-summary" : "quiz");
+  };
+
+  const retryQuiz = async () => {
+    const id = workerId ?? attemptRef.current?.workerId ?? (await resolveWorkerId().catch(() => null))?.workerId;
+    if (!id) {
+      setQuizFeedback("Worker identity unavailable — reload and try again.");
+      return;
+    }
+    await beginAttempt(id, "quiz", lessons.length, 0);
+    setQuizIndex(0);
+    setQuizFeedback("");
+    setStepIndex(0);
+    setResumed(false);
+    setPhase("quiz");
+  };
+
+  const continueToPractical = async () => {
+    const knowledge = deriveKnowledgeProgress(scenario, questions, pkg.assessment.passThresholdPercent, events);
+    if (!knowledge.passed) return;
+    setStepIndex(0);
+    await persistProgress({
+      stage: "ready",
+      nextEvents: events,
+      nextStepIndex: 0,
+      nextLessonIndex: lessons.length,
+      nextQuizIndex: questions.length,
+    });
+    setPhase("ready");
   };
 
   const interact = (kind: string, targetId: string) => {
@@ -256,19 +406,38 @@ export default function FlagshipWorkerJourney({
     if (last?.outcome === "accepted") {
       setFeedback(step.successFeedback);
       const nextIndex = stepIndex + 1;
-      void saveCheckpoint(next, nextIndex);
       if (nextIndex >= practicalSteps.length) {
+        void persistProgress({
+          stage: "scenario",
+          nextEvents: next,
+          nextStepIndex: nextIndex,
+          nextLessonIndex: lessons.length,
+          nextQuizIndex: questions.length,
+        });
         setRuntimeStatus("COMPLETE");
         setPhase("scenario");
         return;
       }
+      void persistProgress({
+        stage: "running",
+        nextEvents: next,
+        nextStepIndex: nextIndex,
+        nextLessonIndex: lessons.length,
+        nextQuizIndex: questions.length,
+      });
       setStepIndex(nextIndex);
       speakInstruction(practicalSteps[nextIndex]?.voiceText ?? "");
       return;
     }
     if (last?.outcome === "penalized") setFeedback(`${step.failureFeedback} ${step.remediation ?? ""}`);
     else setFeedback("That interaction does not match the current objective. Try the highlighted target.");
-    void saveCheckpoint(next, stepIndex);
+    void persistProgress({
+      stage: "running",
+      nextEvents: next,
+      nextStepIndex: stepIndex,
+      nextLessonIndex: lessons.length,
+      nextQuizIndex: questions.length,
+    });
   };
   const interactRef = useRef(interact);
   interactRef.current = interact;
@@ -312,6 +481,13 @@ export default function FlagshipWorkerJourney({
       setFeedback("Training checkpoint missing — return to the knowledge check.");
       return;
     }
+    void persistProgress({
+      stage: "running",
+      nextEvents: events,
+      nextStepIndex: stepIndex,
+      nextLessonIndex: lessons.length,
+      nextQuizIndex: questions.length,
+    });
     setRunMode(mode);
     setPlaced(false);
     setRuntimeStatus("UNMOUNTED");
@@ -364,12 +540,19 @@ export default function FlagshipWorkerJourney({
       return;
     }
     setFeedback("Conditions have worsened. Continuing or moving closer is unsafe in this demo scenario. Choose evacuation.");
-    await saveCheckpoint(next, practicalSteps.length);
+    await persistProgress({
+      stage: "scenario",
+      nextEvents: next,
+      nextStepIndex: practicalSteps.length,
+      nextLessonIndex: lessons.length,
+      nextQuizIndex: questions.length,
+    });
   };
 
   const lesson = lessons[lessonIndex];
   const question = questions[quizIndex];
   const current = practicalSteps[stepIndex];
+  const knowledgeProgress = deriveKnowledgeProgress(scenario, questions, pkg.assessment.passThresholdPercent, events);
   const serverResult = queueEntry?.serverResult as Partial<SyncV2Result> | undefined;
   const confirmed = queueEntry?.state === "CONFIRMED" && typeof serverResult?.passed === "boolean";
   const passed = confirmed ? Boolean(serverResult?.passed) : Boolean(evaluation?.passed);
@@ -400,17 +583,28 @@ export default function FlagshipWorkerJourney({
           {lesson.checkOptions.map((option) => <button className="text-button" key={option} onClick={() => answerLesson(option)}>{option}</button>)}
         </div>
         {lessonFeedback && <p>{lessonFeedback}</p>}
+        {resumed && <p className="empty">Resumed your saved learning progress.</p>}
         {lessonComplete && <button className="primary-button" onClick={() => void nextLesson()}>{lessonIndex === lessons.length - 1 ? "Start knowledge check" : "Next lesson"}</button>}
       </section>}
 
       {phase === "quiz" && question && <section className="panel performance">
-        <div className="panel-heading"><h2>Knowledge check {quizIndex + 1}/{questions.length}</h2><span>{pkg.assessment.passThresholdPercent}% provisional threshold</span></div>
+        <div className="panel-heading"><h2>Knowledge check {quizIndex + 1}/{questions.length}</h2><span>{knowledgeProgress.requiredCorrect}/{questions.length} required</span></div>
         <p><strong>{question.prompt}</strong></p>
         <div style={{ display: "grid", gap: 8 }}>
           {question.options.map((option) => <button className="text-button" key={option} onClick={() => void answerQuestion(option)}>{option}</button>)}
         </div>
         {quizFeedback && <p>{quizFeedback}</p>}
         {resumed && <p className="empty">Resumed your saved training progress.</p>}
+      </section>}
+
+      {phase === "quiz-summary" && <section className="panel performance">
+        <div className="panel-heading"><h2>Knowledge check complete</h2><span>{knowledgeProgress.correct}/{knowledgeProgress.total} correct</span></div>
+        {quizFeedback && <p>{quizFeedback}</p>}
+        <p><strong>{knowledgeProgress.passed ? "Knowledge check passed" : "Knowledge check needs retry"}</strong></p>
+        <p className="empty">{knowledgeProgress.requiredCorrect}/{knowledgeProgress.total} correct is required before the practical.</p>
+        {knowledgeProgress.passed
+          ? <button className="primary-button" onClick={() => void continueToPractical()}>Continue to practical</button>
+          : <button className="primary-button" onClick={() => void retryQuiz()}>Retry knowledge check</button>}
       </section>}
 
       {phase === "ready" && <section className="panel performance">
