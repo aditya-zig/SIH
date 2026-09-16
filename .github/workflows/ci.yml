@@ -66,3 +66,24 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Browser E2E
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-save --package-lock=false @playwright/test@1.55.0
+          npx playwright install --with-deps chromium
+          npm run dev --workspace @suraksha-ar/dashboard -- --host 127.0.0.1 --port 4173 > /tmp/surakshaar-vite.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true; cat /tmp/surakshaar-vite.log' EXIT
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:4173/learn/fire-fixture-001/1 >/dev/null; then
+              break
+            fi
+            if [[ "$attempt" == "60" ]]; then
+              echo "Vite server did not become ready"
+              exit 1
+            fi
+            sleep 1
+          done
+          npx playwright test dashboard/e2e/fire-journey.spec.ts --workers=1 --reporter=line
