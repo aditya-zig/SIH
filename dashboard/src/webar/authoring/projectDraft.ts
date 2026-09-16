@@ -2,7 +2,7 @@
 // Trainer preview and the worker runtime consume this same projection, so what
 // the trainer approves is exactly what the worker trains on. P0 supports the
 // fire-safety-induction template; unknown templates throw instead of guessing.
-import type { Scenario, TrainingDraft, TrainingPackage } from "../contracts.js";
+import type { CompetencyDimension, Scenario, TrainingDraft, TrainingPackage } from "../contracts.js";
 import type { StoredDraft } from "./draftStore.js";
 import { assertValidTrainingPackage } from "../schema/validateTrainingPackage.js";
 import { FIRE_FIXTURE_LABEL, fireFixturePackage } from "../templates/fire.fixture.js";
@@ -10,34 +10,56 @@ import { FIRE_FIXTURE_LABEL, fireFixturePackage } from "../templates/fire.fixtur
 export { FIRE_FIXTURE_LABEL };
 
 const FIRE_STEP_SCORES: Record<string, number> = {
-  identify: 15,
-  extinguisher: 20,
-  pin: 25,
-  exit: 40,
+  "select-extinguisher": 5,
+  pull: 5,
+  aim: 10,
+  squeeze: 10,
+  "sweep-left": 7,
+  "sweep-right": 8,
+  judgment: 30,
 };
+
+function dimensionForStep(id: string): CompetencyDimension {
+  return id === "judgment" ? "judgment" : "practical";
+}
 
 export function projectDraftToScenario(draft: StoredDraft["draft"]): Scenario {
   if (draft.templateId !== "fire-safety-induction") {
     throw new Error(`No P0 scenario projection for template ${draft.templateId}`);
   }
-  // P0 Fire scenario identity matches the proven evaluator fixture exactly.
+  const knowledgeSteps: Scenario["steps"] = draft.assessmentQuestions.map((question) => ({
+    id: question.id,
+    score: 5,
+    dimension: "knowledge",
+    accept: [{ kind: "answer", targetId: question.correctOption }],
+    wrongActions: question.options
+      .filter((option) => option !== question.correctOption)
+      .map((targetId) => ({ kind: "answer", targetId, penalty: 5, critical: false })),
+  }));
+  const practicalSteps: Scenario["steps"] = draft.trainingSteps.map((step) => {
+    const [kind, targetId] = step.expectedAction.split(":");
+    const projected: Scenario["steps"][number] = {
+      id: step.id,
+      score: FIRE_STEP_SCORES[step.id] ?? 10,
+      dimension: dimensionForStep(step.id),
+      accept: kind && targetId ? [{ kind, targetId }] : [],
+    };
+    if (step.id === "select-extinguisher") {
+      projected.wrongActions = [{ kind: "select", targetId: "water", penalty: 25, critical: true }];
+    }
+    if (step.id === "judgment") {
+      projected.wrongActions = [
+        { kind: "decision", targetId: "keep-fighting", penalty: 30, critical: false },
+        { kind: "decision", targetId: "move-closer", penalty: 30, critical: false },
+      ];
+    }
+    return projected;
+  });
   return {
     id: "fire_001",
     version: draft.templateVersion,
-    passScore: 70,
-    steps: draft.trainingSteps.map((s) => {
-      const [kind, targetId] = s.expectedAction.split(":");
-      const step: Scenario["steps"][number] = {
-        id: s.id,
-        score: FIRE_STEP_SCORES[s.id] ?? 10,
-        accept: kind && targetId ? [{ kind, targetId }] : [],
-      };
-      // Fixture-known critical rule preserved through the projection.
-      if (s.id === "extinguisher") {
-        step.wrongActions = [{ kind: "select", targetId: "water", penalty: 25, critical: true }];
-      }
-      return step;
-    }),
+    passScore: 95,
+    steps: [...knowledgeSteps, ...practicalSteps],
   };
 }
 
@@ -46,8 +68,6 @@ export function projectDraftToPackage(
   input: { workplaceId: string; title: string },
 ): TrainingPackage {
   const d = stored.draft;
-  // Preview projections render before approval exists; placeholders keep one
-  // validated code path while the UI always shows the draft's real status.
   const pkg: TrainingPackage = {
     packageId: stored.draftId,
     version: 1,
@@ -77,12 +97,10 @@ export function projectDraftToPackage(
       zones: [{ id: "training-zone", label: "Compact training zone", center: [0, 0, -2], size: [4, 2.5, 4] }],
       lighting: { ambient: 0.8, directional: 1.0 },
     },
-    assets: [...new Set(d.arObjects.map((o) => o.assetKey))].map((assetKey) => ({
-      assetKey,
-      url: `/models/${assetKey}.glb`,
-    })),
+    assets: [...new Set(d.arObjects.map((o) => o.assetKey))].map((assetKey) => ({ assetKey, url: `/models/${assetKey}.glb` })),
     hazards: d.hazards,
     learningObjectives: d.learningObjectives,
+    ...(d.lessons ? { lessons: d.lessons } : {}),
     trainingSteps: d.trainingSteps,
     assessment: {
       questions: d.assessmentQuestions.map((q) => ({
@@ -90,14 +108,15 @@ export function projectDraftToPackage(
         prompt: q.prompt,
         options: q.options,
         correctOption: q.correctOption,
+        ...(q.explanation ? { explanation: q.explanation } : {}),
       })),
-      passThresholdPercent: 70,
+      passThresholdPercent: d.assessmentQuestions.length >= 5 ? 80 : 70,
     },
     arObjects: d.arObjects,
     evaluationRules: {
       requiredStepIds: d.trainingSteps.map((s) => s.id),
       forbiddenActions: ["select:water"],
-      quizThresholdPercent: 70,
+      quizThresholdPercent: d.assessmentQuestions.length >= 5 ? 80 : 70,
     },
     voiceContent: {
       locale: "en-IN",
@@ -109,9 +128,6 @@ export function projectDraftToPackage(
   return pkg;
 }
 
-// Labeled demo generation for environments without a live AI backend. Never
-// presented as analysis of the uploaded workplace; the review UI always shows
-// the DEMO SAMPLE banner alongside this content.
 export function demoDraftFromFixture(input: {
   draftId: string;
   workplaceName: string;
@@ -131,10 +147,8 @@ export function demoDraftFromFixture(input: {
     detectedObjects: f.arObjects.map((o) => ({ id: o.id, label: o.label })),
     hazards: f.hazards,
     learningObjectives: f.learningObjectives,
+    ...(f.lessons ? { lessons: f.lessons } : {}),
     trainingSteps: f.trainingSteps,
-    // All five scene objects, including the water marker: the evaluator's
-    // critical wrong action needs a visible, clickable target, and preview
-    // must show exactly what the worker scene shows.
     arObjects: f.scene.objects.map((o) => ({
       id: o.id,
       type: "hazard",
@@ -149,6 +163,7 @@ export function demoDraftFromFixture(input: {
       prompt: q.prompt,
       options: q.options,
       correctOption: q.correctOption,
+      ...(q.explanation ? { explanation: q.explanation } : {}),
     })),
     warnings: ["Demo generation only; trainer review required."],
     reviewStatus: "AI_DRAFT",
