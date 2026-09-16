@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { getSyncContext } from "../../data.js";
+import { getSyncContext, isUsableSupabaseEnvValue } from "../../data.js";
 import type { Scenario, TrainingPackage } from "../contracts.js";
 import type { StoredDraft } from "../authoring/draftStore.js";
 import { projectDraftToPackage, projectDraftToScenario } from "../authoring/projectDraft.js";
@@ -32,7 +32,9 @@ export class RemoteDraftConflictError extends Error {
 }
 
 function anonKey(): string | undefined {
-  return import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+  const value = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+  if (!isUsableSupabaseEnvValue(value)) return undefined;
+  return value!.trim();
 }
 
 export async function getLiveSupabaseSession(): Promise<LiveSupabaseSession | null> {

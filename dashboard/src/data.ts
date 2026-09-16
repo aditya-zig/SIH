@@ -3,7 +3,47 @@ import type { CertificateVerification, DashboardData } from "./types";
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
-const supabase = url && anonKey ? createClient(url, anonKey) : undefined;
+
+export function isUsableSupabaseEnvValue(value: string | undefined): boolean {
+  if (!value) return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  const lower = trimmed.toLowerCase();
+  if (
+    lower.includes("your-") ||
+    lower.includes("your_") ||
+    lower.includes("example") ||
+    lower.includes("placeholder") ||
+    lower.includes("changeme") ||
+    lower.includes("<") ||
+    lower.includes(">")
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function isUsableSupabaseUrl(value: string | undefined): boolean {
+  if (!isUsableSupabaseEnvValue(value)) return false;
+  try {
+    const parsed = new URL(value!.trim());
+    if (parsed.protocol === "https:") return true;
+    if (
+      parsed.protocol === "http:" &&
+      (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1")
+    ) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+const supabase =
+  isUsableSupabaseUrl(url) && isUsableSupabaseEnvValue(anonKey)
+    ? createClient(url!.trim(), anonKey!.trim())
+    : undefined;
 
 export const backendConfigured = Boolean(supabase);
 
@@ -180,13 +220,15 @@ export async function loadDashboard(): Promise<DashboardData> {
 }
 
 export async function verifyCertificate(code: string): Promise<CertificateVerification> {
-  if (!url || !anonKey) {
+  const usableUrl = isUsableSupabaseUrl(url) ? url!.trim() : undefined;
+  const usableKey = isUsableSupabaseEnvValue(anonKey) ? anonKey!.trim() : undefined;
+  if (!usableUrl || !usableKey) {
     return { valid: false, certificateCode: code.toUpperCase() };
   }
 
   const response = await fetch(
-    `${url}/functions/v1/verify-certificate?code=${encodeURIComponent(code)}`,
-    { headers: { apikey: anonKey, authorization: `Bearer ${anonKey}` } },
+    `${usableUrl}/functions/v1/verify-certificate?code=${encodeURIComponent(code)}`,
+    { headers: { apikey: usableKey, authorization: `Bearer ${usableKey}` } },
   );
   const body = (await response.json()) as CertificateVerification | { error: string };
   if (response.status === 404) return { valid: false, certificateCode: code.toUpperCase() };
