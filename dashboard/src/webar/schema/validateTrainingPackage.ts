@@ -28,7 +28,7 @@ function isFiniteVec3(v: unknown): v is [number, number, number] {
   return Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === "number" && Number.isFinite(n));
 }
 
-const ALLOWED_INTERACTIONS = new Set(["tap", "select", "interact", "waypoint", "observe"]);
+const ALLOWED_INTERACTIONS = new Set(["tap", "select", "interact", "hold", "waypoint", "observe"]);
 
 export function validateSceneDefinition(scene: unknown): string[] {
   const errors: string[] = [];
