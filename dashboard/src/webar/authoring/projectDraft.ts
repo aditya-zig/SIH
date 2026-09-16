@@ -34,7 +34,7 @@ export function projectDraftToScenario(draft: StoredDraft["draft"]): Scenario {
     accept: [{ kind: "answer", targetId: question.correctOption }],
     wrongActions: question.options
       .filter((option) => option !== question.correctOption)
-      .map((targetId) => ({ kind: "answer", targetId, penalty: 5, critical: false })),
+      .map((targetId) => ({ kind: "answer", targetId, penalty: 0, critical: false, advance: true })),
   }));
   const practicalSteps: Scenario["steps"] = draft.trainingSteps.map((step) => {
     const [kind, targetId] = step.expectedAction.split(":");
